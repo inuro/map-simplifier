@@ -80,86 +80,124 @@ test("preset toggle switches style name and keeps canvas visible", async ({ page
   );
 });
 
-test("clicking a feature hides it and reset clears the overlay", async ({ page }) => {
+test("clicking a feature selects it; shift+click adds; Esc clears", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
     timeout: 30_000,
   });
 
-  // 東京駅周辺の建物が多いズームに寄せる（デフォルト13→15）
+  // 建物が多い zoom に寄せる
   await page.evaluate(() => {
-    const g = window as unknown as {
-      __mlMap?: { setZoom(z: number): void; once(ev: string, cb: () => void): void };
-    };
+    const g = window as unknown as { __mlMap?: { setZoom(z: number): void } };
     g.__mlMap?.setZoom(15);
   });
   await page.waitForFunction(
     () => {
-      const g = window as unknown as { __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean } };
-      return !!g.__mlMap && Math.round(g.__mlMap.getZoom()) === 15 && g.__mlMap.isStyleLoaded() && g.__mlMap.areTilesLoaded();
+      const g = window as unknown as {
+        __mlMap?: {
+          getZoom(): number;
+          isStyleLoaded(): boolean;
+          areTilesLoaded(): boolean;
+        };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 15 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
     },
     null,
     { timeout: 15_000 },
   );
 
-  const canvas = page.locator("#map canvas.maplibregl-canvas");
-  const box = await canvas.boundingBox();
-  if (!box) throw new Error("canvas not measured");
-
-  // クリック候補点をいくつか試して、非表示化できる feature に当たるまで探す
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
-  const attempts: Array<[number, number]> = [
-    [cx, cy],
-    [cx + 60, cy],
-    [cx, cy + 60],
-    [cx - 60, cy],
-    [cx, cy - 60],
-    [cx + 120, cy + 20],
-  ];
-
-  let clicked = 0;
-  for (const [x, y] of attempts) {
-    const before = await page.evaluate(() => {
-      const g = window as unknown as {
-        __mlMap?: {
-          getSource(id: string): unknown;
-        };
+  // 2 つの "異なる feature" にヒットする座標を事前に探しておく。
+  // タイルごとに feature が異なるので、画面全体をスキャンして
+  // top feature の geometry が異なる2点を見つける。
+  const hits = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: {
+        queryRenderedFeatures(
+          p: [number, number],
+          opts?: { layers?: string[] },
+        ): Array<{ geometry: unknown; layer: { id: string } }>;
       };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
-    });
-    await page.mouse.click(x, y);
-    // MapLibre の click→queryRenderedFeatures→setData は同期的なので wait は最小
-    await page.waitForTimeout(100);
-    const after = await page.evaluate(() => {
-      const g = window as unknown as {
-        __mlMap?: { getSource(id: string): unknown };
-      };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
-    });
-    if (after > before) {
-      clicked = after;
-      break;
+    };
+    const m = g.__mlMap!;
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
+    const layers = [
+      "waterarea-fill",
+      "wstructurea-fill",
+      "river-line",
+      "railway-line",
+      "road-line",
+      "building-fill",
+      "boundary-line",
+    ];
+    const seen = new Map<string, [number, number]>();
+    for (let x = 40; x < cw && seen.size < 2; x += 30) {
+      for (let y = 40; y < ch && seen.size < 2; y += 30) {
+        const top = m.queryRenderedFeatures([x, y], { layers })[0];
+        if (!top) continue;
+        const key = JSON.stringify(top.geometry);
+        if (!seen.has(key)) seen.set(key, [x, y]);
+      }
     }
-  }
-  expect(clicked).toBeGreaterThan(0);
+    return [...seen.values()];
+  });
+  expect(hits.length).toBe(2);
+  const [p1, p2] = hits as [[number, number], [number, number]];
 
-  // リセットで空に戻る
-  await page.locator("#reset-edits").click();
-  const finalCount = await page.evaluate(() => {
+  // click payload を fire で流し込むヘルパ（shift 状態も込み）
+  async function fireClick(
+    pt: [number, number],
+    shift: boolean,
+  ): Promise<number> {
+    return page.evaluate(
+      ({ pt, shift }) => {
+        const g = window as unknown as {
+          __mlMap?: {
+            unproject(p: [number, number]): unknown;
+            fire(ev: string, payload: unknown): void;
+            getSource(id: string): unknown;
+          };
+        };
+        const m = g.__mlMap!;
+        const lngLat = m.unproject(pt);
+        m.fire("click", {
+          point: { x: pt[0], y: pt[1] },
+          lngLat,
+          originalEvent: new MouseEvent("click", { shiftKey: shift }),
+        });
+        const src = m.getSource("selection-overlay") as
+          | { _data?: { features?: unknown[] } }
+          | undefined;
+        return src?._data?.features?.length ?? 0;
+      },
+      { pt, shift },
+    );
+  }
+
+  // 1. p1 を click → 選択数 1
+  const n1 = await fireClick(p1, false);
+  expect(n1).toBe(1);
+
+  // 2. p2 を shift+click → 選択数 2
+  const n2 = await fireClick(p2, true);
+  expect(n2).toBe(2);
+
+  // 3. Esc で解除 → 0
+  await page.keyboard.press("Escape");
+  const final = await page.evaluate(() => {
     const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
-    const src = g.__mlMap?.getSource("hidden-overlay") as
+    const src = g.__mlMap?.getSource("selection-overlay") as
       | { _data?: { features?: unknown[] } }
       | undefined;
     return src?._data?.features?.length ?? 0;
   });
-  expect(finalCount).toBe(0);
+  expect(final).toBe(0);
 });
 
 test("URL hash reflects view state after pan", async ({ page }) => {
