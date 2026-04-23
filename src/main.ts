@@ -1,6 +1,6 @@
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { buildBaseStyle } from "./map/style";
+import { buildBaseStyle, type Preset } from "./map/style";
 import { GSI_ATTRIBUTION } from "./map/gsiSource";
 import {
   DEFAULT_VIEW,
@@ -10,20 +10,23 @@ import {
 } from "./state/viewState";
 import { buildExportFilename, composePngWithCredit, downloadCanvasAsPng } from "./export/png";
 
-const mapRoot = document.getElementById("map");
-const exportButton = document.getElementById("export-png");
-if (!mapRoot || !(mapRoot instanceof HTMLElement)) {
-  throw new Error("missing #map container");
-}
-if (!(exportButton instanceof HTMLButtonElement)) {
-  throw new Error("missing #export-png button");
+function requireEl<T extends Element>(id: string, ctor: new (...a: never[]) => T): T {
+  const el = document.getElementById(id);
+  if (!(el instanceof ctor)) throw new Error(`missing #${id}`);
+  return el;
 }
 
+const mapRoot = requireEl("map", HTMLElement);
+const exportButton = requireEl("export-png", HTMLButtonElement);
+const presetStandardBtn = requireEl("preset-standard", HTMLButtonElement);
+const presetMonoBtn = requireEl("preset-mono", HTMLButtonElement);
+
 const initialView: ViewState = decodeHashToView(window.location.hash) ?? DEFAULT_VIEW;
+let currentPreset: Preset = "standard";
 
 const map: MapLibreMap = new maplibregl.Map({
   container: mapRoot,
-  style: buildBaseStyle(),
+  style: buildBaseStyle(currentPreset),
   center: [initialView.center.lng, initialView.center.lat],
   zoom: initialView.zoom,
   hash: false,
@@ -59,6 +62,17 @@ map.on("load", () => {
 if (import.meta.env.DEV) {
   (globalThis as unknown as { __mlMap?: MapLibreMap }).__mlMap = map;
 }
+
+function applyPreset(next: Preset): void {
+  if (next === currentPreset) return;
+  currentPreset = next;
+  // source と layer を差分更新で入れ替える。diff: true なら source(タイル)は再取得しない。
+  map.setStyle(buildBaseStyle(next), { diff: true });
+  presetStandardBtn.setAttribute("aria-pressed", String(next === "standard"));
+  presetMonoBtn.setAttribute("aria-pressed", String(next === "mono"));
+}
+presetStandardBtn.addEventListener("click", () => applyPreset("standard"));
+presetMonoBtn.addEventListener("click", () => applyPreset("mono"));
 
 exportButton.addEventListener("click", async () => {
   exportButton.disabled = true;
