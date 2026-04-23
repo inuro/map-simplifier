@@ -566,6 +566,71 @@ test("shift+drag rubber band selects multiple features", async ({ page }) => {
   expect(selected).toBeGreaterThan(1);
 });
 
+test("line-width popover + / - / reset changes paint-property", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  // 初期 road line-width 式を取得
+  const initialRoad = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getPaintProperty(id: string, prop: string): unknown };
+    };
+    return g.__mlMap!.getPaintProperty("road-line", "line-width");
+  });
+  // 初期は interpolate 式（配列形）で stop 値が [0.3, 1.0, 2.4]
+  expect(Array.isArray(initialRoad)).toBe(true);
+
+  // ポップオーバーを開く
+  await page.locator("#line-width-toggle").click();
+  await expect(page.locator("#line-width-popover")).toBeVisible();
+
+  // 道路を太く（×1.25）
+  await page.locator('button[data-lw="road"][data-op="inc"]').click();
+  const afterInc = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getPaintProperty(id: string, prop: string): unknown };
+    };
+    return g.__mlMap!.getPaintProperty("road-line", "line-width");
+  });
+  // stop 値が 1.25 倍になっていること
+  // interpolate 式は ["interpolate", ["linear"], ["zoom"], z1, v1, z2, v2, ...] 。
+  // 値stop は index 4, 6, 8, ... （3番目以降の偶数）。
+  const stopsInc = (afterInc as unknown[]).slice(3).filter((_, i) => i % 2 === 1) as number[];
+  expect(stopsInc[0]).toBeCloseTo(0.3 * 1.25, 5);
+  expect(stopsInc[2]).toBeCloseTo(2.4 * 1.25, 5);
+
+  // 表示ラベルも更新される
+  await expect(page.locator('[data-lw-value="road"]')).toHaveText("1.25×");
+
+  // 鉄道を細く
+  await page.locator('button[data-lw="railway"][data-op="dec"]').click();
+  const railway = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getPaintProperty(id: string, prop: string): unknown };
+    };
+    return g.__mlMap!.getPaintProperty("railway-line", "line-width");
+  });
+  expect(railway).toBeCloseTo(1.1 / 1.25, 5);
+
+  // リセット
+  await page.locator("#line-width-reset").click();
+  await expect(page.locator('[data-lw-value="road"]')).toHaveText("1.00×");
+  const reset = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getPaintProperty(id: string, prop: string): unknown };
+    };
+    return {
+      road: g.__mlMap!.getPaintProperty("road-line", "line-width"),
+      railway: g.__mlMap!.getPaintProperty("railway-line", "line-width"),
+    };
+  });
+  const resetStops = (reset.road as unknown[]).slice(3).filter((_, i) => i % 2 === 1) as number[];
+  expect(resetStops[0]).toBeCloseTo(0.3, 5);
+  expect(reset.railway).toBeCloseTo(1.1, 5);
+});
+
 test("URL hash reflects view state after pan", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
