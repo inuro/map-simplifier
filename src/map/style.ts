@@ -57,6 +57,19 @@ interface PresetPalette {
   buildingFill: string;
   buildingOutline: string;
   boundary: string;
+  /**
+   * 強調 overlay の塗り色（半透明で重ねる）。
+   * standard は視認性優先で赤系、mono は紙面ルックを崩さないため黒系。
+   */
+  highlightFill: string;
+  /** 強調 overlay の縁取り／線／点の色。 */
+  highlightStroke: string;
+  /**
+   * 強調 polygon の fill-opacity。standard は赤自体が彩度高いので 0.35 で十分、
+   * mono は建物の地色が明るい（#ebebeb など）ため濃い目（0.55）にしないと
+   * 「枠線だけ強調されてるように見える」不自然さが出る。
+   */
+  highlightFillOpacity: number;
 }
 
 /**
@@ -89,6 +102,10 @@ export const PALETTES: Record<Preset, PresetPalette> = {
     buildingFill: "#d8d3ca",
     buildingOutline: "#b5ae9f",
     boundary: "#9a9a9a",
+    // 赤系（#d93b3b）。カラー紙面／画面で最も素直に目立つ。
+    highlightFill: "#d93b3b",
+    highlightStroke: "#d93b3b",
+    highlightFillOpacity: 0.35,
   },
   // グレースケール簡略化。紙面（単色印刷）への馴染みを優先。
   // 鉄道を最も濃く、道路はやや薄く、水域は陰影で差をつける。
@@ -102,6 +119,11 @@ export const PALETTES: Record<Preset, PresetPalette> = {
     buildingFill: "#ebebeb",
     buildingOutline: "#b8b8b8",
     boundary: "#8a8a8a",
+    // 強調は最も濃い黒で「ここが主役」を明示。建物の地色（#ebebeb）が明るいので、
+    // 塗りを濃い目に（0.55）して「塗りが濃くなった」感を出す。
+    highlightFill: "#000000",
+    highlightStroke: "#000000",
+    highlightFillOpacity: 0.55,
   },
 };
 
