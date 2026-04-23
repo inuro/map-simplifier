@@ -3,7 +3,7 @@ import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
 
 /**
  * 選択中 feature を視覚的に示すオーバレイ。
- * hidden-overlay（#7）の隣に、橙色の「縁取り」レイヤ群を置く。
+ * 橙色の「縁取り」レイヤ群として base style の上に積む。
  *
  * preset 非依存の固定色で、標準／モノトーンどちらでも視認できることを狙う。
  */

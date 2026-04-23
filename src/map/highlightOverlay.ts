@@ -5,8 +5,8 @@ import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
  * 強調中 feature の視覚表現。preset 非依存の固定色 (#d93b3b)。
  *
  * 塗り＋縁取りで「強調されている」ことが紙面でも判る強度を出す。
- * hidden-overlay より下に描画することで、非表示にした feature の
- * 強調は bg mask に覆われて見えなくなる（=「消された物は消えたまま」）。
+ * なお「非表示」側は feature-state（opacity 0）で実現するため、
+ * 強調 overlay と重なり順を気にする必要はない（#26）。
  */
 
 export const HIGHLIGHT_SOURCE_ID = "highlight-overlay";

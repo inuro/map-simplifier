@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GSI_BVMAP_TILE_URL,
+  GSI_BVMAP_TILE_URL_WITH_IDS,
   GSI_ATTRIBUTION,
   buildGsiVectorSource,
 } from "../../src/map/gsiSource";
@@ -12,16 +13,22 @@ describe("GSI vector tile source", () => {
     );
   });
 
+  it("exposes a gsi-ids:// wrapped URL for the id-injecting protocol (#26)", () => {
+    expect(GSI_BVMAP_TILE_URL_WITH_IDS).toBe(
+      "gsi-ids://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf",
+    );
+  });
+
   it("includes an attribution naming 国土地理院 or 地理院タイル", () => {
     // 利用規約上、出典として「国土地理院」または「地理院タイル」のいずれかを
     // 明示する必要がある。
     expect(GSI_ATTRIBUTION).toMatch(/(国土地理院|地理院タイル)/);
   });
 
-  it("builds a MapLibre vector source config with tiles, minzoom, maxzoom", () => {
+  it("builds a MapLibre vector source using the gsi-ids:// URL", () => {
     const src = buildGsiVectorSource();
     expect(src.type).toBe("vector");
-    expect(src.tiles).toEqual([GSI_BVMAP_TILE_URL]);
+    expect(src.tiles).toEqual([GSI_BVMAP_TILE_URL_WITH_IDS]);
     expect(src.minzoom).toBe(4);
     expect(src.maxzoom).toBe(16);
     expect(src.attribution).toBe(GSI_ATTRIBUTION);

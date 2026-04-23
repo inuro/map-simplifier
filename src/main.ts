@@ -1,12 +1,9 @@
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { buildBaseStyle, type Preset } from "./map/style";
+import { buildBaseStyle, HIDEABLE_LAYER_IDS, type Preset } from "./map/style";
 import { GSI_ATTRIBUTION } from "./map/gsiSource";
-import {
-  ensureHiddenOverlay,
-  setHiddenOverlayData,
-  HIDEABLE_LAYER_IDS,
-} from "./map/overlay";
+import { registerGsiIdsProtocol } from "./map/idProtocol";
+import { HiddenSync } from "./map/hiddenSync";
 import {
   ensureSelectionOverlay,
   setSelectionOverlayData,
@@ -31,7 +28,6 @@ import {
 } from "./state/viewState";
 import {
   EditStateStore,
-  toHiddenFeatureCollection,
   toHighlightFeatureCollection,
   type EditStateSnapshot,
 } from "./state/editState";
@@ -65,6 +61,9 @@ const editState = new EditStateStore();
 const selectionStore = new SelectionStore();
 const history = new History<EditStateSnapshot>();
 const lineWidthStore = new LineWidthStore();
+
+// GSI タイルに feature.id を注入する独自プロトコル。Map コンストラクタより前に登録する。
+registerGsiIdsProtocol(maplibregl);
 
 const map: MapLibreMap = new maplibregl.Map({
   container: mapRoot,
@@ -101,35 +100,50 @@ function syncHash(): void {
 map.on("moveend", syncHash);
 map.on("zoomend", syncHash);
 
-function refreshOverlays(): void {
-  // 描画順（下 → 上）：base → highlight → hidden mask → selection stroke。
-  // 先に addLayer した方が下に入るので、呼び出し順は highlight → hidden → selection。
-  // すでに layer がある 2 回目以降は ensure*Overlay が paint/data を更新するのみで、
-  // layer 順序は最初の呼び出し順で固定される。
+const hiddenSync = new HiddenSync({
+  map,
+  getHidden: () => editState.state.hidden,
+});
+
+function refreshNonHiddenOverlays(): void {
+  // highlight → selection の順で重ねる。hidden は feature-state に寄せたので overlay 不要。
   ensureHighlightOverlay(map, toHighlightFeatureCollection(editState.state.highlighted));
-  ensureHiddenOverlay(map, currentPreset, toHiddenFeatureCollection(editState.state.hidden));
   ensureSelectionOverlay(map, toSelectionFeatureCollection(selectionStore.state));
 }
 
 map.on("load", () => {
-  refreshOverlays();
+  refreshNonHiddenOverlays();
   applyLineWidthFactors(map, lineWidthStore.factors);
+  hiddenSync.syncAll();
   document.body.dataset["mapReady"] = "true";
 });
 
 // preset 切替は setStyle を伴い overlay を飛ばすことがある。
-// styledata はその後何度か発火するが、isStyleLoaded() が真になってから
-// overlay を復元する（もしくは色を追従させる）。
-// line-width factor も preset 切替で初期値に戻るので再適用する。
+// styledata はその後何度か発火するが、isStyleLoaded() が真になってから復元する。
 map.on("styledata", () => {
   if (!map.isStyleLoaded()) return;
-  refreshOverlays();
+  refreshNonHiddenOverlays();
   applyLineWidthFactors(map, lineWidthStore.factors);
+  hiddenSync.syncAll();
+});
+
+// 新しいタイルがロードされたときに hidden 同期を再適用。
+// sourcedata は多重発火するが syncAll は冪等なので問題ない。
+map.on("sourcedata", (e) => {
+  if (e.sourceId !== "gsi") return;
+  if (!e.isSourceLoaded) return;
+  hiddenSync.syncAll();
+});
+
+// zoom や pan で「cache 済み」のタイルに戻った場合、sourcedata が発火しない
+// ケースがあるため、idle（描画が落ち着いた時）でも同期を行う。冪等。
+map.on("idle", () => {
+  hiddenSync.syncAll();
 });
 
 editState.subscribe((s) => {
-  setHiddenOverlayData(map, toHiddenFeatureCollection(s.hidden));
   setHighlightOverlayData(map, toHighlightFeatureCollection(s.highlighted));
+  hiddenSync.syncAll();
   resetEditsBtn.disabled = s.hidden.length === 0 && s.highlighted.length === 0;
 });
 resetEditsBtn.disabled = true;
@@ -174,12 +188,21 @@ function applyPreset(next: Preset): void {
 presetStandardBtn.addEventListener("click", () => applyPreset("standard"));
 presetMonoBtn.addEventListener("click", () => applyPreset("mono"));
 
+// 選択対象は「hidden でない feature」のみ。hidden は opacity 0 で描画されるが
+// queryRenderedFeatures は不可視でも返すため、明示的にフィルタする。
+function filterVisible<T extends { sourceLayer?: string; geometry: import("geojson").Geometry }>(
+  features: ReadonlyArray<T>,
+): T[] {
+  return features.filter(
+    (f) => !editState.isHidden({ sourceLayer: f.sourceLayer ?? "", geometry: f.geometry }),
+  );
+}
+
 // 選択操作（click / shift+click / 空クリックで clear）
 map.on("click", (e) => {
   const pt: [number, number] = [e.point.x, e.point.y];
-  const features = map.queryRenderedFeatures(pt, {
-    layers: [...HIDEABLE_LAYER_IDS],
-  });
+  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const features = filterVisible(raw);
   if (features.length === 0) {
     selectionStore.clear();
     return;
@@ -200,16 +223,16 @@ map.on("click", (e) => {
 
 map.on("mousemove", (e) => {
   const pt: [number, number] = [e.point.x, e.point.y];
-  const hit = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const hit = filterVisible(raw);
   map.getCanvas().style.cursor = hit.length > 0 ? "pointer" : "";
 });
 
 // Shift+ドラッグで矩形選択（既存選択に追加）。
 attachRubberBand(map, {
   onRelease: (bbox) => {
-    const features = map.queryRenderedFeatures(bbox, {
-      layers: [...HIDEABLE_LAYER_IDS],
-    });
+    const raw = map.queryRenderedFeatures(bbox, { layers: [...HIDEABLE_LAYER_IDS] });
+    const features = filterVisible(raw);
     // 同一 feature が複数レイヤ／タイル境界で重複して返る可能性がある。
     // SelectionStore.add が sourceLayer+geometry で重複排除するため add で流し込む。
     for (const f of features) {

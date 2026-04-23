@@ -1,4 +1,4 @@
-import type { StyleSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, StyleSpecification } from "maplibre-gl";
 import { buildGsiVectorSource, GSI_ATTRIBUTION } from "./gsiSource";
 
 const SOURCE_ID = "gsi";
@@ -20,6 +20,32 @@ const SOURCE_ID = "gsi";
 
 export const PRESETS = ["standard", "mono"] as const;
 export type Preset = (typeof PRESETS)[number];
+
+/**
+ * 「ユーザーが削除できる」対象となる style layer id。
+ * 削除は feature-state `hidden=true` → opacity 0 で実現する（#26 で mask 方式から移行）。
+ * 本 list は次の用途で参照される：
+ *   - 各レイヤの paint に hidden=true 時に opacity 0 となる式を注入
+ *   - クリック/ホバー時の queryRenderedFeatures の対象絞り込み
+ *   - addProtocol 経由で tile.features に id を付けた後、feature-state を同期するターゲット決定
+ */
+export const HIDEABLE_LAYER_IDS = [
+  "waterarea-fill",
+  "wstructurea-fill",
+  "river-line",
+  "railway-line",
+  "road-line",
+  "building-fill",
+  "boundary-line",
+] as const;
+
+/** 各 hideable layer に feature-state=hidden のとき opacity 0 となる expression。 */
+const HIDDEN_OPACITY_EXPR: ExpressionSpecification = [
+  "case",
+  ["boolean", ["feature-state", "hidden"], false],
+  0,
+  1,
+];
 
 interface PresetPalette {
   bg: string;
@@ -98,28 +124,42 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         type: "fill",
         source: SOURCE_ID,
         "source-layer": "waterarea",
-        paint: { "fill-color": c.waterarea },
+        paint: {
+          "fill-color": c.waterarea,
+          "fill-opacity": HIDDEN_OPACITY_EXPR,
+        },
       },
       {
         id: "wstructurea-fill",
         type: "fill",
         source: SOURCE_ID,
         "source-layer": "wstructurea",
-        paint: { "fill-color": c.wstructurea },
+        paint: {
+          "fill-color": c.wstructurea,
+          "fill-opacity": HIDDEN_OPACITY_EXPR,
+        },
       },
       {
         id: "river-line",
         type: "line",
         source: SOURCE_ID,
         "source-layer": "river",
-        paint: { "line-color": c.river, "line-width": BASE_RIVER_WIDTH },
+        paint: {
+          "line-color": c.river,
+          "line-width": BASE_RIVER_WIDTH,
+          "line-opacity": HIDDEN_OPACITY_EXPR,
+        },
       },
       {
         id: "railway-line",
         type: "line",
         source: SOURCE_ID,
         "source-layer": "railway",
-        paint: { "line-color": c.railway, "line-width": BASE_RAILWAY_WIDTH },
+        paint: {
+          "line-color": c.railway,
+          "line-width": BASE_RAILWAY_WIDTH,
+          "line-opacity": HIDDEN_OPACITY_EXPR,
+        },
       },
       {
         id: "road-line",
@@ -129,6 +169,7 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         paint: {
           "line-color": c.road,
           "line-width": BASE_ROAD_WIDTH as unknown as number,
+          "line-opacity": HIDDEN_OPACITY_EXPR,
         },
       },
       {
@@ -140,6 +181,7 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         paint: {
           "fill-color": c.buildingFill,
           "fill-outline-color": c.buildingOutline,
+          "fill-opacity": HIDDEN_OPACITY_EXPR,
         },
       },
       {
@@ -151,6 +193,7 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
           "line-color": c.boundary,
           "line-width": BASE_BOUNDARY_WIDTH,
           "line-dasharray": [3, 2],
+          "line-opacity": HIDDEN_OPACITY_EXPR,
         },
       },
     ],

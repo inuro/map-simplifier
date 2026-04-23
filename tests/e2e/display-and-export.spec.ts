@@ -200,7 +200,7 @@ test("clicking a feature selects it; shift+click adds; Esc clears", async ({ pag
   expect(final).toBe(0);
 });
 
-test("select → delete → undo → redo cycles the hidden overlay", async ({ page }) => {
+test("select → delete → undo → redo cycles the hidden list (feature-state)", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
     timeout: 30_000,
@@ -284,11 +284,10 @@ test("select → delete → undo → redo cycles the hidden overlay", async ({ p
 
   const hiddenCount = async (): Promise<number> =>
     page.evaluate(() => {
-      const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
+      const g = window as unknown as {
+        __editState?: { state: { hidden: unknown[] } };
+      };
+      return g.__editState?.state.hidden.length ?? 0;
     });
 
   // 削除ボタン → 非表示1件、selection は空、リセット/undo 有効
@@ -385,11 +384,10 @@ test("Delete key deletes selection; Cmd+Z undoes", async ({ page }) => {
 
   const hidden = async (): Promise<number> =>
     page.evaluate(() => {
-      const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
+      const g = window as unknown as {
+        __editState?: { state: { hidden: unknown[] } };
+      };
+      return g.__editState?.state.hidden.length ?? 0;
     });
 
   await page.keyboard.press("Delete");
