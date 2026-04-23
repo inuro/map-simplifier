@@ -15,6 +15,7 @@ import {
   ensureHighlightOverlay,
   setHighlightOverlayData,
 } from "./map/highlightOverlay";
+import { attachRubberBand } from "./map/rubberBand";
 import {
   DEFAULT_VIEW,
   decodeHashToView,
@@ -63,6 +64,10 @@ const map: MapLibreMap = new maplibregl.Map({
   attributionControl: false,
   preserveDrawingBuffer: true,
 });
+
+// MapLibre デフォルトの shift+drag = box zoom と衝突するので無効化。
+// shift+drag は本アプリではラバーバンド選択（#17）に割り当てる。
+map.boxZoom.disable();
 
 map.addControl(
   new maplibregl.AttributionControl({ compact: true, customAttribution: GSI_ATTRIBUTION }),
@@ -181,6 +186,24 @@ map.on("mousemove", (e) => {
   const pt: [number, number] = [e.point.x, e.point.y];
   const hit = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
   map.getCanvas().style.cursor = hit.length > 0 ? "pointer" : "";
+});
+
+// Shift+ドラッグで矩形選択（既存選択に追加）。
+attachRubberBand(map, {
+  onRelease: (bbox) => {
+    const features = map.queryRenderedFeatures(bbox, {
+      layers: [...HIDEABLE_LAYER_IDS],
+    });
+    // 同一 feature が複数レイヤ／タイル境界で重複して返る可能性がある。
+    // SelectionStore.add が sourceLayer+geometry で重複排除するため add で流し込む。
+    for (const f of features) {
+      selectionStore.add({
+        sourceLayer: f.sourceLayer ?? "",
+        geometry: f.geometry,
+        properties: f.properties ?? {},
+      });
+    }
+  },
 });
 
 // ---- アクション ----
