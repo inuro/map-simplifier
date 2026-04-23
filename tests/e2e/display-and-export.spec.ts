@@ -508,6 +508,64 @@ test("select → 強調 → toggle off → undo restores", async ({ page }) => {
   expect(await highlightCount()).toBe(1);
 });
 
+test("shift+drag rubber band selects multiple features", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { setZoom(z: number): void } };
+    g.__mlMap?.setZoom(15);
+  });
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 15 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  // canvas に直接 MouseEvent を dispatch してラバーバンドを起動。
+  // Playwright の keyboard.down('Shift') + mouse.down/move/up は MapLibre の
+  // mousedown ハンドラに shiftKey=true を伝えない環境がある（実際本環境で確認）。
+  // ここでは DOM レベルで同等の操作を再現する。
+  const selected = await page.evaluate(() => {
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+    const cx = canvas.clientWidth / 2;
+    const cy = canvas.clientHeight / 2;
+    const size = 300;
+    const p1 = { x: cx - size / 2, y: cy - size / 2 };
+    const p2 = { x: cx + size / 2, y: cy + size / 2 };
+    function mk(type: string, x: number, y: number): MouseEvent {
+      return new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: rect.left + x,
+        clientY: rect.top + y,
+        button: 0,
+        shiftKey: true,
+      });
+    }
+    canvas.dispatchEvent(mk("mousedown", p1.x, p1.y));
+    canvas.dispatchEvent(mk("mousemove", (p1.x + p2.x) / 2, (p1.y + p2.y) / 2));
+    canvas.dispatchEvent(mk("mousemove", p2.x, p2.y));
+    canvas.dispatchEvent(mk("mouseup", p2.x, p2.y));
+    const g = window as unknown as { __selectionStore?: { state: unknown[] } };
+    return g.__selectionStore?.state.length ?? 0;
+  });
+  expect(selected).toBeGreaterThan(1);
+});
+
 test("URL hash reflects view state after pan", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
