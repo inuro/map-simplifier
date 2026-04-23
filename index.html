@@ -37,6 +37,12 @@
       header .spacer {
         flex: 1;
       }
+      .selection-count {
+        font-size: 12px;
+        color: #666;
+        min-width: 6em;
+        text-align: right;
+      }
       button.primary {
         appearance: none;
         border: 1px solid #888;
@@ -90,6 +96,7 @@
     <div id="app">
       <header>
         <h1>map-simplifier</h1>
+        <span id="selection-count" class="selection-count" aria-live="polite"></span>
         <span class="spacer"></span>
         <div class="preset-group" role="group" aria-label="スタイルプリセット">
           <button id="preset-standard" type="button" aria-pressed="true">標準</button>
