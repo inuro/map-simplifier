@@ -33,6 +33,53 @@ test("map container renders and PNG export triggers a download", async ({ page }
   expect(suggested).toMatch(/^map-simplifier-\d{8}-\d{6}\.png$/);
 });
 
+test("preset toggle switches style name and keeps canvas visible", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  // デフォルトは standard
+  const initial = await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { getStyle(): { name?: string } } };
+    return g.__mlMap?.getStyle().name ?? null;
+  });
+  expect(initial).toBe("map-simplifier-standard");
+
+  // モノトーンへ切替
+  const monoBtn = page.locator("#preset-mono");
+  await expect(monoBtn).toBeVisible();
+  await monoBtn.click();
+
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getStyle(): { name?: string }; isStyleLoaded(): boolean };
+      };
+      return !!g.__mlMap?.isStyleLoaded() && g.__mlMap.getStyle().name === "map-simplifier-mono";
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  await expect(page.locator("#map canvas.maplibregl-canvas")).toBeVisible();
+
+  // 標準に戻す
+  await page.locator("#preset-standard").click();
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getStyle(): { name?: string }; isStyleLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap?.isStyleLoaded() && g.__mlMap.getStyle().name === "map-simplifier-standard"
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+});
+
 test("URL hash reflects view state after pan", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {

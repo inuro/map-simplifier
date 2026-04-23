@@ -53,6 +53,33 @@
         opacity: 0.5;
         cursor: wait;
       }
+      .preset-group {
+        display: inline-flex;
+        border: 1px solid #888;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .preset-group button {
+        appearance: none;
+        border: 0;
+        background: #fff;
+        padding: 6px 10px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .preset-group button + button {
+        border-left: 1px solid #ccc;
+      }
+      .preset-group button:hover {
+        background: #f3f3f3;
+      }
+      .preset-group button[aria-pressed="true"] {
+        background: #333;
+        color: #fff;
+      }
+      .preset-group button[aria-pressed="true"]:hover {
+        background: #222;
+      }
       #map {
         width: 100%;
         height: 100%;
@@ -64,6 +91,10 @@
       <header>
         <h1>map-simplifier</h1>
         <span class="spacer"></span>
+        <div class="preset-group" role="group" aria-label="スタイルプリセット">
+          <button id="preset-standard" type="button" aria-pressed="true">標準</button>
+          <button id="preset-mono" type="button" aria-pressed="false">モノトーン</button>
+        </div>
         <button id="export-png" class="primary" type="button">PNG書き出し</button>
       </header>
       <div id="map"></div>
