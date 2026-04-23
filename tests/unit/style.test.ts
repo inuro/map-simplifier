@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBaseStyle, PRESETS, type Preset } from "../../src/map/style";
+import { buildBaseStyle, PALETTES, PRESETS, type Preset } from "../../src/map/style";
 
 // HEX -> {r,g,b} に分解して、R==G==B（グレースケール）かを判定するヘルパ。
 function isGrayscaleHex(hex: string): boolean {
@@ -55,5 +55,19 @@ describe("style presets", () => {
     expect(s.sources.gsi).toBeDefined();
     // attribution は metadata に詰めている
     expect(s.metadata).toMatchObject({ attribution: expect.stringMatching(/地理院/) });
+  });
+
+  it("preset 'mono' has grayscale highlight colors (fill and stroke)", () => {
+    const p = PALETTES["mono"];
+    expect(isGrayscaleHex(p.highlightFill)).toBe(true);
+    expect(isGrayscaleHex(p.highlightStroke)).toBe(true);
+  });
+
+  it("preset 'standard' keeps a chromatic (non-grayscale) highlight", () => {
+    // 紙面カラー用途で目立つ赤系を維持。グレースケールではないことを確認する
+    // （#d93b3b のような R=G=B 以外の HEX）。
+    const p = PALETTES["standard"];
+    expect(isGrayscaleHex(p.highlightFill)).toBe(false);
+    expect(isGrayscaleHex(p.highlightStroke)).toBe(false);
   });
 });

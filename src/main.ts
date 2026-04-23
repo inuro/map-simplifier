@@ -107,7 +107,12 @@ const hiddenSync = new HiddenSync({
 
 function refreshNonHiddenOverlays(): void {
   // highlight → selection の順で重ねる。hidden は feature-state に寄せたので overlay 不要。
-  ensureHighlightOverlay(map, toHighlightFeatureCollection(editState.state.highlighted));
+  // highlight は preset に応じて色が変わるので、毎回 currentPreset を渡して paint を追従させる。
+  ensureHighlightOverlay(
+    map,
+    currentPreset,
+    toHighlightFeatureCollection(editState.state.highlighted),
+  );
   ensureSelectionOverlay(map, toSelectionFeatureCollection(selectionStore.state));
 }
 
