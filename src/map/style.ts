@@ -33,7 +33,7 @@ interface PresetPalette {
   boundary: string;
 }
 
-const PALETTES: Record<Preset, PresetPalette> = {
+export const PALETTES: Record<Preset, PresetPalette> = {
   standard: {
     bg: "#fafafa",
     waterarea: "#d6e4ec",

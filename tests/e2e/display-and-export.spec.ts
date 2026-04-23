@@ -80,6 +80,88 @@ test("preset toggle switches style name and keeps canvas visible", async ({ page
   );
 });
 
+test("clicking a feature hides it and reset clears the overlay", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  // 東京駅周辺の建物が多いズームに寄せる（デフォルト13→15）
+  await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { setZoom(z: number): void; once(ev: string, cb: () => void): void };
+    };
+    g.__mlMap?.setZoom(15);
+  });
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as { __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean } };
+      return !!g.__mlMap && Math.round(g.__mlMap.getZoom()) === 15 && g.__mlMap.isStyleLoaded() && g.__mlMap.areTilesLoaded();
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  const canvas = page.locator("#map canvas.maplibregl-canvas");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("canvas not measured");
+
+  // クリック候補点をいくつか試して、非表示化できる feature に当たるまで探す
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const attempts: Array<[number, number]> = [
+    [cx, cy],
+    [cx + 60, cy],
+    [cx, cy + 60],
+    [cx - 60, cy],
+    [cx, cy - 60],
+    [cx + 120, cy + 20],
+  ];
+
+  let clicked = 0;
+  for (const [x, y] of attempts) {
+    const before = await page.evaluate(() => {
+      const g = window as unknown as {
+        __mlMap?: {
+          getSource(id: string): unknown;
+        };
+      };
+      const src = g.__mlMap?.getSource("hidden-overlay") as
+        | { _data?: { features?: unknown[] } }
+        | undefined;
+      return src?._data?.features?.length ?? 0;
+    });
+    await page.mouse.click(x, y);
+    // MapLibre の click→queryRenderedFeatures→setData は同期的なので wait は最小
+    await page.waitForTimeout(100);
+    const after = await page.evaluate(() => {
+      const g = window as unknown as {
+        __mlMap?: { getSource(id: string): unknown };
+      };
+      const src = g.__mlMap?.getSource("hidden-overlay") as
+        | { _data?: { features?: unknown[] } }
+        | undefined;
+      return src?._data?.features?.length ?? 0;
+    });
+    if (after > before) {
+      clicked = after;
+      break;
+    }
+  }
+  expect(clicked).toBeGreaterThan(0);
+
+  // リセットで空に戻る
+  await page.locator("#reset-edits").click();
+  const finalCount = await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
+    const src = g.__mlMap?.getSource("hidden-overlay") as
+      | { _data?: { features?: unknown[] } }
+      | undefined;
+    return src?._data?.features?.length ?? 0;
+  });
+  expect(finalCount).toBe(0);
+});
+
 test("URL hash reflects view state after pan", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
