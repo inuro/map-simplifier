@@ -16,6 +16,13 @@ import {
   setHighlightOverlayData,
 } from "./map/highlightOverlay";
 import { attachRubberBand } from "./map/rubberBand";
+import { applyLineWidthFactors } from "./map/lineWidth";
+import {
+  LineWidthStore,
+  LINE_WIDTH_MAX,
+  LINE_WIDTH_MIN,
+  type LineWidthCategory,
+} from "./state/lineWidthStore";
 import {
   DEFAULT_VIEW,
   decodeHashToView,
@@ -48,12 +55,16 @@ const highlightBtn = requireEl("highlight", HTMLButtonElement);
 const deleteBtn = requireEl("delete", HTMLButtonElement);
 const resetEditsBtn = requireEl("reset-edits", HTMLButtonElement);
 const selectionCountEl = requireEl("selection-count", HTMLSpanElement);
+const lineWidthToggle = requireEl("line-width-toggle", HTMLButtonElement);
+const lineWidthPopover = requireEl("line-width-popover", HTMLElement);
+const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
 
 const initialView: ViewState = decodeHashToView(window.location.hash) ?? DEFAULT_VIEW;
 let currentPreset: Preset = "standard";
 const editState = new EditStateStore();
 const selectionStore = new SelectionStore();
 const history = new History<EditStateSnapshot>();
+const lineWidthStore = new LineWidthStore();
 
 const map: MapLibreMap = new maplibregl.Map({
   container: mapRoot,
@@ -102,15 +113,18 @@ function refreshOverlays(): void {
 
 map.on("load", () => {
   refreshOverlays();
+  applyLineWidthFactors(map, lineWidthStore.factors);
   document.body.dataset["mapReady"] = "true";
 });
 
 // preset 切替は setStyle を伴い overlay を飛ばすことがある。
 // styledata はその後何度か発火するが、isStyleLoaded() が真になってから
 // overlay を復元する（もしくは色を追従させる）。
+// line-width factor も preset 切替で初期値に戻るので再適用する。
 map.on("styledata", () => {
   if (!map.isStyleLoaded()) return;
   refreshOverlays();
+  applyLineWidthFactors(map, lineWidthStore.factors);
 });
 
 editState.subscribe((s) => {
@@ -141,11 +155,13 @@ if (import.meta.env.DEV) {
     __editState?: EditStateStore;
     __selectionStore?: SelectionStore;
     __history?: History<EditStateSnapshot>;
+    __lineWidthStore?: LineWidthStore;
   };
   w.__mlMap = map;
   w.__editState = editState;
   w.__selectionStore = selectionStore;
   w.__history = history;
+  w.__lineWidthStore = lineWidthStore;
 }
 
 function applyPreset(next: Preset): void {
@@ -299,6 +315,71 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     redo();
   }
+});
+
+// ---- ライン幅調整 UI ----
+
+const LINE_WIDTH_CATEGORIES: LineWidthCategory[] = ["road", "railway", "river", "boundary"];
+
+function updateLineWidthUI(): void {
+  const f = lineWidthStore.factors;
+  for (const cat of LINE_WIDTH_CATEGORIES) {
+    const valueEl = lineWidthPopover.querySelector(`[data-lw-value="${cat}"]`);
+    if (valueEl) valueEl.textContent = `${f[cat].toFixed(2)}×`;
+    const decBtn = lineWidthPopover.querySelector(
+      `button[data-lw="${cat}"][data-op="dec"]`,
+    );
+    const incBtn = lineWidthPopover.querySelector(
+      `button[data-lw="${cat}"][data-op="inc"]`,
+    );
+    if (decBtn instanceof HTMLButtonElement) {
+      decBtn.disabled = f[cat] <= LINE_WIDTH_MIN + 1e-9;
+    }
+    if (incBtn instanceof HTMLButtonElement) {
+      incBtn.disabled = f[cat] >= LINE_WIDTH_MAX - 1e-9;
+    }
+  }
+}
+
+lineWidthStore.subscribe((f) => {
+  applyLineWidthFactors(map, f);
+  updateLineWidthUI();
+});
+updateLineWidthUI();
+
+lineWidthPopover.addEventListener("click", (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLButtonElement)) return;
+  const cat = target.getAttribute("data-lw") as LineWidthCategory | null;
+  const op = target.getAttribute("data-op");
+  if (!cat || !LINE_WIDTH_CATEGORIES.includes(cat)) return;
+  if (op === "inc") lineWidthStore.increase(cat);
+  else if (op === "dec") lineWidthStore.decrease(cat);
+});
+
+lineWidthResetBtn.addEventListener("click", () => {
+  lineWidthStore.reset();
+});
+
+function setPopoverOpen(open: boolean): void {
+  if (open) {
+    lineWidthPopover.hidden = false;
+    lineWidthToggle.setAttribute("aria-expanded", "true");
+  } else {
+    lineWidthPopover.hidden = true;
+    lineWidthToggle.setAttribute("aria-expanded", "false");
+  }
+}
+lineWidthToggle.addEventListener("click", () => {
+  setPopoverOpen(lineWidthPopover.hidden);
+});
+// ポップオーバー外クリックで閉じる（トグル自身とポップオーバー内クリックは除外）
+document.addEventListener("click", (e) => {
+  if (lineWidthPopover.hidden) return;
+  const t = e.target;
+  if (!(t instanceof Node)) return;
+  if (lineWidthPopover.contains(t) || lineWidthToggle.contains(t)) return;
+  setPopoverOpen(false);
 });
 
 exportButton.addEventListener("click", async () => {

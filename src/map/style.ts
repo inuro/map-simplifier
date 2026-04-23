@@ -33,6 +33,25 @@ interface PresetPalette {
   boundary: string;
 }
 
+/**
+ * 基準となる line-width。runtime で factor 調整する #24 で参照される。
+ * ここを単一の source of truth とする。
+ */
+export const BASE_ROAD_WIDTH = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  10,
+  0.3,
+  14,
+  1.0,
+  16,
+  2.4,
+] as const;
+export const BASE_RAILWAY_WIDTH = 1.1;
+export const BASE_RIVER_WIDTH = 0.8;
+export const BASE_BOUNDARY_WIDTH = 0.5;
+
 export const PALETTES: Record<Preset, PresetPalette> = {
   standard: {
     bg: "#fafafa",
@@ -93,14 +112,14 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         type: "line",
         source: SOURCE_ID,
         "source-layer": "river",
-        paint: { "line-color": c.river, "line-width": 0.8 },
+        paint: { "line-color": c.river, "line-width": BASE_RIVER_WIDTH },
       },
       {
         id: "railway-line",
         type: "line",
         source: SOURCE_ID,
         "source-layer": "railway",
-        paint: { "line-color": c.railway, "line-width": 1.1 },
+        paint: { "line-color": c.railway, "line-width": BASE_RAILWAY_WIDTH },
       },
       {
         id: "road-line",
@@ -109,17 +128,7 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         "source-layer": "road",
         paint: {
           "line-color": c.road,
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            10,
-            0.3,
-            14,
-            1.0,
-            16,
-            2.4,
-          ],
+          "line-width": BASE_ROAD_WIDTH as unknown as number,
         },
       },
       {
@@ -140,7 +149,7 @@ export function buildBaseStyle(preset: Preset = "standard"): StyleSpecification 
         "source-layer": "boundary",
         paint: {
           "line-color": c.boundary,
-          "line-width": 0.5,
+          "line-width": BASE_BOUNDARY_WIDTH,
           "line-dasharray": [3, 2],
         },
       },
