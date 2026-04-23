@@ -86,6 +86,10 @@
       .preset-group button[aria-pressed="true"]:hover {
         background: #222;
       }
+      .edit-group {
+        display: inline-flex;
+        gap: 6px;
+      }
       #map {
         width: 100%;
         height: 100%;
@@ -102,9 +106,14 @@
           <button id="preset-standard" type="button" aria-pressed="true">標準</button>
           <button id="preset-mono" type="button" aria-pressed="false">モノトーン</button>
         </div>
-        <button id="reset-edits" class="primary" type="button" title="非表示にした要素を全て戻す" disabled>
-          編集をリセット
-        </button>
+        <div class="edit-group" role="group" aria-label="編集アクション">
+          <button id="undo" class="primary" type="button" title="戻す (⌘Z)" disabled>戻す</button>
+          <button id="redo" class="primary" type="button" title="やり直す (⇧⌘Z)" disabled>やり直す</button>
+          <button id="delete" class="primary" type="button" title="選択中を削除 (Delete)" disabled>削除</button>
+          <button id="reset-edits" class="primary" type="button" title="編集を全て破棄" disabled>
+            編集をリセット
+          </button>
+        </div>
         <button id="export-png" class="primary" type="button">PNG書き出し</button>
       </header>
       <div id="map"></div>

@@ -76,6 +76,54 @@ describe("EditStateStore", () => {
     s.hide({ sourceLayer: "x", geometry: { type: "Point", coordinates: [0, 0] }, properties: {} });
     expect(listener).toHaveBeenCalledTimes(1);
   });
+
+  it("hideMany appends multiple features in a single listener call", () => {
+    const s = new EditStateStore();
+    const listener = vi.fn();
+    s.subscribe(listener);
+    const entries = s.hideMany([
+      { sourceLayer: "road", geometry: { type: "Point", coordinates: [0, 0] }, properties: {} },
+      { sourceLayer: "road", geometry: { type: "Point", coordinates: [1, 1] }, properties: {} },
+      { sourceLayer: "building", geometry: { type: "Point", coordinates: [2, 2] }, properties: {} },
+    ]);
+    expect(entries).toHaveLength(3);
+    expect(s.state.hidden).toHaveLength(3);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("hideMany with empty array does not fire listener", () => {
+    const s = new EditStateStore();
+    const listener = vi.fn();
+    s.subscribe(listener);
+    s.hideMany([]);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("snapshot + restore roundtrips the hidden list", () => {
+    const s = new EditStateStore();
+    s.hide({ sourceLayer: "road", geometry: { type: "Point", coordinates: [0, 0] }, properties: { a: 1 } });
+    s.hide({ sourceLayer: "building", geometry: { type: "Point", coordinates: [5, 5] }, properties: {} });
+    const snap = s.snapshot();
+
+    s.clearAll();
+    expect(s.state.hidden).toEqual([]);
+
+    const listener = vi.fn();
+    s.subscribe(listener);
+    s.restore(snap);
+    expect(s.state.hidden).toHaveLength(2);
+    expect(s.state.hidden[0]!.sourceLayer).toBe("road");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("snapshot is independent of subsequent mutations (deep-copied)", () => {
+    const s = new EditStateStore();
+    s.hide({ sourceLayer: "road", geometry: { type: "Point", coordinates: [0, 0] }, properties: {} });
+    const snap = s.snapshot();
+    s.hide({ sourceLayer: "road", geometry: { type: "Point", coordinates: [1, 1] }, properties: {} });
+    expect(snap.hidden).toHaveLength(1);
+    expect(s.state.hidden).toHaveLength(2);
+  });
 });
 
 describe("toHiddenFeatureCollection", () => {

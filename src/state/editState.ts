@@ -26,7 +26,17 @@ export interface HideInput {
   properties: Record<string, unknown>;
 }
 
+/** Undo 履歴用の独立スナップショット。clone 保持。 */
+export interface EditStateSnapshot {
+  hidden: HiddenFeature[];
+  counter: number;
+}
+
 type Listener = (state: EditState) => void;
+
+function deepClone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
 
 export class EditStateStore {
   private _hidden: HiddenFeature[] = [];
@@ -38,16 +48,19 @@ export class EditStateStore {
   }
 
   hide(input: HideInput): HiddenFeature {
-    this._counter += 1;
-    const entry: HiddenFeature = {
-      id: `h-${this._counter}`,
-      sourceLayer: input.sourceLayer,
-      geometry: input.geometry,
-      properties: { ...input.properties },
-    };
+    const entry = this._build(input);
     this._hidden.push(entry);
     this._emit();
     return entry;
+  }
+
+  /** 複数 feature を一括で非表示化。listener は 1 回だけ発火。 */
+  hideMany(inputs: ReadonlyArray<HideInput>): HiddenFeature[] {
+    if (inputs.length === 0) return [];
+    const entries = inputs.map((i) => this._build(i));
+    this._hidden.push(...entries);
+    this._emit();
+    return entries;
   }
 
   clearAll(): void {
@@ -56,10 +69,35 @@ export class EditStateStore {
     this._emit();
   }
 
+  /** 現在の状態のディープコピーを返す。Undo 履歴への投入用。 */
+  snapshot(): EditStateSnapshot {
+    return {
+      hidden: deepClone(this._hidden),
+      counter: this._counter,
+    };
+  }
+
+  /** snapshot で取った状態に復元。listener を 1 回発火。 */
+  restore(s: EditStateSnapshot): void {
+    this._hidden = deepClone(s.hidden);
+    this._counter = s.counter;
+    this._emit();
+  }
+
   subscribe(l: Listener): () => void {
     this._listeners.add(l);
     return () => {
       this._listeners.delete(l);
+    };
+  }
+
+  private _build(input: HideInput): HiddenFeature {
+    this._counter += 1;
+    return {
+      id: `h-${this._counter}`,
+      sourceLayer: input.sourceLayer,
+      geometry: input.geometry,
+      properties: { ...input.properties },
     };
   }
 
