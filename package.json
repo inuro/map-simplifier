@@ -19,6 +19,7 @@
   "devDependencies": {
     "@mapbox/vector-tile": "^2.0.4",
     "@playwright/test": "^1.48.2",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.9.0",
     "jsdom": "^25.0.1",
     "pbf": "^4.0.1",
