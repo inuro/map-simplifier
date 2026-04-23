@@ -64,20 +64,48 @@
 
 ```
 src/
-  main.ts            # アプリエントリ（MapLibre 初期化・UI束ね）
+  main.ts                    # アプリエントリ（MapLibre 初期化・UI束ね・イベント配線）
   map/
-    gsiSource.ts     # GSIベクトルタイルの source 定義
-    style.ts         # レイヤスタイル（簡略・モノトーン含む）
-  export/
-    png.ts           # canvas からの PNG 書き出し（attribution 合成含む）
-  ui/
-    controls.ts      # ズーム/範囲/出力ボタン等
+    gsiSource.ts             # GSIベクトルタイルの source 定義・出典クレジット
+    style.ts                 # preset 別スタイル (standard / mono)、BASE_*_WIDTH 定数
+    overlay.ts               # 「削除」用 hidden-overlay（bg色 mask layer）と HIDEABLE_LAYER_IDS
+    selectionOverlay.ts      # 選択中 feature の橙縁取り overlay
+    highlightOverlay.ts      # 強調中 feature の赤塗り＋縁取り overlay
+    rubberBand.ts            # Shift+drag 矩形選択の DOM 追従と bbox 算出
+    lineWidth.ts             # line-width factor を paint property に反映
   state/
-    viewState.ts     # 中心座標・ズーム・表示レイヤ等のアプリ状態
+    viewState.ts             # 中心・ズームの hash encode/decode
+    editState.ts             # hidden[] と highlighted[] の store + snapshot/restore
+    selectionStore.ts        # 選択中 feature の store（click=select/toggle/multi）
+    history.ts               # snapshot-based Undo/Redo（汎用）
+    lineWidthStore.ts        # line-width factor（road/railway/river/boundary）と +/- 操作
+  export/
+    png.ts                   # canvas からの PNG 書き出し（下部クレジット帯合成）
+scripts/
+  inspect-tile.mjs           # 実 GSI タイルの pbf 解析（source-layer 名・feature.id 有無 等）
 tests/
-  unit/              # Vitest
-  e2e/               # Playwright
+  unit/                      # Vitest（純関数ロジック・store 群）
+  e2e/                       # Playwright（実ブラウザで UI 行動と paint property 変化を検証）
+.github/workflows/ci.yml     # ubuntu + pnpm + typecheck + vitest（E2E は flaky 回避で含めない）
 ```
+
+### 主要な設計判断
+
+- **選択ベースの編集モデル**：`click = 選択` / `削除 / 強調 / ラベル` などは選択状態に対するアクション。`#15` で導入。
+- **削除は「feature を消す」ではなく「bg 色の mask overlay で覆う」実装**（#7 で導入）。GSI experimental_bvmap が feature.id を付与しないため、`setFeatureState` や filter で feature 単体を除外できない割り切り。副作用として、
+  - 線系 mask の幅と元線幅が連動していない（zoom out で隣接 feature を覆う）
+  - 橋（road over water）を削除すると下の水域ではなく bg 色が描画される
+  を抱える。**真の削除への移行は [#26](https://github.com/inuro/map-simplifier/issues/26)** で対応予定（addProtocol でタイルに id 注入 → feature-state + filter）。
+- **Undo/Redo**：`History<T>` 汎用 snapshot ベース。`editState` の `snapshot()/restore()` でディープコピー。選択・ビュー設定（preset/line-width）は履歴に乗せない（編集のみ）。
+- **overlay 層の順序**：base → `highlight-overlay` → `hidden-overlay`（mask） → `selection-overlay`（縁取り）の順。hidden が highlight を覆うため、非表示指示が強調より優先される。
+- **line-width 調整**：factor を別 store で保持。style.ts が `BASE_*_WIDTH` を export し、runtime で `setPaintProperty` 経由で掛け算。preset 切替や styledata 時に再適用。
+- **`queryRenderedFeatures` の引数形式に注意**：`{x, y}` オブジェクトを渡すと options と誤解釈され viewport 全体走査になる（本プロジェクトで実害あり）。必ず `[x, y]` 配列形式で渡す。
+- **MapLibre の shift+drag（boxZoom）を disable**：デフォルトの矩形ズームが本アプリの矩形選択（#17）と衝突するため `map.boxZoom.disable()` を明示。
+
+### 現時点の既知の制約
+
+- 削除が真の削除ではないこと（前述、#26 で解決予定）
+- Playwright の `keyboard.down('Shift') + page.mouse.*` は本環境で MapLibre の mousedown に `shiftKey=true` を伝えなかった。E2E はシフト系は `dispatchEvent` で記述している。
 
 ### 出力仕様
 
@@ -98,6 +126,8 @@ tests/
 ### 完了した節目
 
 - **M1 (2026-04-22)**: 国土地理院ベクトルタイル表示 + PNG 出力。commit `4c93e9c`。
+- **M2 進行中 (2026-04-23)**: モノトーンプリセット (#12)、ライン幅 runtime 調整 (#25)。線画プリセット (#11)、カテゴリ別 on/off (#1)、URL 再整理 (#3) が未着手。
+- **M3 進行中 (2026-04-23)**: 選択モデル (#20) → 削除+Undo (#21) → 強調 (#22) → 矩形選択 (#23) まで投入。スティッキーモード (#18)、ラベル (#9)、JSON 保存 (#5)、真の削除 (#26) が未着手。
 
 ---
 
