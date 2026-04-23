@@ -6,7 +6,7 @@ export function buildExportFilename(d: Date = new Date()): string {
   const h = pad(d.getUTCHours());
   const mi = pad(d.getUTCMinutes());
   const s = pad(d.getUTCSeconds());
-  return `simplemap-${y}${mo}${da}-${h}${mi}${s}.png`;
+  return `map-simplifier-${y}${mo}${da}-${h}${mi}${s}.png`;
 }
 
 export interface ComposeOptions {

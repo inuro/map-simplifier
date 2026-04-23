@@ -30,7 +30,7 @@ test("map container renders and PNG export triggers a download", async ({ page }
   ]);
 
   const suggested = download.suggestedFilename();
-  expect(suggested).toMatch(/^simplemap-\d{8}-\d{6}\.png$/);
+  expect(suggested).toMatch(/^map-simplifier-\d{8}-\d{6}\.png$/);
 });
 
 test("URL hash reflects view state after pan", async ({ page }) => {

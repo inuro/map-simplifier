@@ -21,7 +21,7 @@ const SOURCE_ID = "gsi";
 export function buildBaseStyle(): StyleSpecification {
   return {
     version: 8,
-    name: "simplemap-base",
+    name: "map-simplifier-base",
     sources: {
       [SOURCE_ID]: buildGsiVectorSource(),
     },

@@ -1,6 +1,10 @@
-# simplemap
+# map-simplifier
 
 書籍原稿用の簡略化地図図版を作成するツール。国土地理院ベクトルタイルをベースに、ブラウザ上でインタラクティブに要素を取捨選択してPNGとして書き出す。
+
+- **リポジトリ**: https://github.com/inuro/map-simplifier
+- **バックログ**: [GitHub Issues](https://github.com/inuro/map-simplifier/issues)
+- **プロジェクト**: https://github.com/inuro/map-simplifier/projects (必要に応じて)
 
 ---
 
@@ -34,7 +38,9 @@
 ### 環境固有の注意
 
 1. **Node**：`.nvmrc` で v22.18.0 に固定。Codex.app 同梱の Node（Hardened Runtime + `disable-library-validation` 未付与）だと rollup の prebuilt `.node` が dlopen 失敗する。nvm 版を使う。
-2. **node_modules の置き場所**：このリポジトリは Dropbox (`/Library/CloudStorage/Dropbox/…`) 配下にあるため、`.npmrc` で pnpm の `virtual-store-dir` を `~/.local/share/simplemap-virtual-store` に外出ししている。これでネイティブバイナリ本体は Dropbox 同期外に置かれ、プロジェクト内の `node_modules` は symlink のみになる。
+2. **node_modules の置き場所**：このリポジトリは Dropbox (`/Library/CloudStorage/Dropbox/…`) 配下にあるため、`.npmrc` で pnpm の `virtual-store-dir` を `~/.local/share/map-simplifier-virtual-store` に外出ししている。これでネイティブバイナリ本体は Dropbox 同期外に置かれ、プロジェクト内の `node_modules` は symlink のみになる。
+
+この種の環境横断の話は `~/.claude/CLAUDE.md` から参照する Obsidian ノート `topics/mac-dev-environment.md` にも記録している。変更があれば両方を更新する。
 
 ### 実レイヤ名（experimental_bvmap）
 
@@ -79,36 +85,19 @@ tests/
 - **解像度**：画面表示サイズ等倍（MapLibre canvas をそのまま PNG 化）
 - **クレジット**：「出典：国土地理院ベクトルタイル」相当の文言を画像内または別メタとして同梱（書籍掲載時の出典明記義務に対応）
 
-### 編集粒度
-
-- **MVP**：レイヤ種別（道路・建物・注記・水域等）単位での表示ON/OFF相当は**含まない**。表示とPNG出力のみ。
-- **次段階**：レイヤ種別ON/OFF、モノトーン化、個別要素クリック選択。
-
 ---
 
-## マイルストーン
+## 進捗・バックログ管理
 
-進捗に応じて各マイルストーン完了時に CLAUDE.md を更新する。
+**進捗・バックログの管理は GitHub Issues で行う**。CLAUDE.md は要件・仕様・アーキテクチャを示す一次ドキュメントで、todo のチェックリストは持たない。
 
-### M1: 表示 + PNG 出力（完了）
+- 新規作業項目は Issue を立てる。milestone（M1/M2/M3...）で段階を表現し、label で種別（feat / fix / chore / docs / test）を表現する。
+- Issue の粒度：「1 PR で閉じられる」「要件が明快で検証可能」を目安にする。曖昧な大きいものはさらに小さくする。
+- 完了した Issue は CLAUDE.md で履歴として残さず、GitHub 上の closed 状態に委ねる。**CLAUDE.md に書くのは、要件が変わる・仕様が変わる・アーキテクチャが変わるときだけ**。
 
-- [x] 国土地理院ベクトルタイルを MapLibre で表示できる
-- [x] ズーム・パンが動く（NavigationControl / ScaleControl 同梱）
-- [x] 「PNG 書き出し」ボタンで現在表示中の地図が PNG ダウンロードできる
-- [x] 出典クレジットが PNG に焼き込まれる（下部24pxの帯）＋ Attribution コントロールにも表示
-- [x] `pnpm dev` で起動、`pnpm test` で単体テスト10件、`pnpm e2e` で E2E 2件が通る
-- [x] `pnpm typecheck` が通る
+### 完了した節目
 
-### M2: レイヤ制御・簡略化
-
-- [ ] レイヤカテゴリ別（道路 / 鉄道 / 建物 / 注記 / 水域 / 土地利用 等）の表示ON/OFF
-- [ ] プリセット：標準 / モノトーン / 線画のみ
-- [ ] 中心座標・ズームをURLクエリに保存（リロードで復元）
-
-### M3: 個別要素のクリック編集
-
-- [ ] クリックで feature を選択し「非表示」「ハイライト」「ラベル付加」等ができる
-- [ ] 編集状態を JSON で保存・復元
+- **M1 (2026-04-22)**: 国土地理院ベクトルタイル表示 + PNG 出力。commit `4c93e9c`。
 
 ---
 
@@ -122,10 +111,10 @@ tests/
 
 このリポジトリで「実装完了」と報告する前には、以下を自分で実行して通っていることを確認する：
 
-1. `npm run typecheck`（`tsc --noEmit`）
-2. `npm test`（Vitest）
-3. `npm run e2e`（Playwright — 実装されている範囲で）
-4. `npm run dev` を起動し、実ブラウザ（Playwright MCP 等でも可）で主要機能が動作することを確認
+1. `pnpm typecheck`（`tsc --noEmit`）
+2. `pnpm test`（Vitest）
+3. `pnpm e2e`（Playwright — 実装されている範囲で）
+4. `pnpm dev` を起動し、実ブラウザ（Playwright MCP 等でも可）で主要機能が動作することを確認
 
 ---
 

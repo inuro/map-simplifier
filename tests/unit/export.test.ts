@@ -2,14 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { buildExportFilename, composePngWithCredit } from "../../src/export/png";
 
 describe("buildExportFilename", () => {
-  it("uses simplemap prefix + ISO-like timestamp + .png", () => {
+  it("uses map-simplifier prefix + ISO-like timestamp + .png", () => {
     const d = new Date("2026-04-22T09:05:03Z");
-    expect(buildExportFilename(d)).toBe("simplemap-20260422-090503.png");
+    expect(buildExportFilename(d)).toBe("map-simplifier-20260422-090503.png");
   });
 
   it("pads single-digit month/day/time components", () => {
     const d = new Date("2026-01-02T03:04:05Z");
-    expect(buildExportFilename(d)).toBe("simplemap-20260102-030405.png");
+    expect(buildExportFilename(d)).toBe("map-simplifier-20260102-030405.png");
   });
 });
 
