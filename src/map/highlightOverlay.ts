@@ -24,7 +24,7 @@ export function ensureHighlightOverlay(
   preset: Preset,
   data: FeatureCollection,
 ): void {
-  const { highlightFill, highlightStroke } = PALETTES[preset];
+  const { highlightFill, highlightStroke, highlightFillOpacity } = PALETTES[preset];
 
   if (!map.getSource(HIGHLIGHT_SOURCE_ID)) {
     map.addSource(HIGHLIGHT_SOURCE_ID, { type: "geojson", data });
@@ -32,7 +32,7 @@ export function ensureHighlightOverlay(
     (map.getSource(HIGHLIGHT_SOURCE_ID) as GeoJSONSource).setData(data);
   }
 
-  // polygon: 半透明塗り
+  // polygon: 半透明塗り（opacity は preset に応じて切り替え）
   if (!map.getLayer(HIGHLIGHT_LAYER_IDS.polygonFill)) {
     map.addLayer({
       id: HIGHLIGHT_LAYER_IDS.polygonFill,
@@ -41,11 +41,16 @@ export function ensureHighlightOverlay(
       filter: ["==", ["geometry-type"], "Polygon"],
       paint: {
         "fill-color": highlightFill,
-        "fill-opacity": 0.35,
+        "fill-opacity": highlightFillOpacity,
       },
     });
   } else {
     map.setPaintProperty(HIGHLIGHT_LAYER_IDS.polygonFill, "fill-color", highlightFill);
+    map.setPaintProperty(
+      HIGHLIGHT_LAYER_IDS.polygonFill,
+      "fill-opacity",
+      highlightFillOpacity,
+    );
   }
 
   // polygon: 縁取り

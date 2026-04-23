@@ -70,4 +70,17 @@ describe("style presets", () => {
     expect(isGrayscaleHex(p.highlightFill)).toBe(false);
     expect(isGrayscaleHex(p.highlightStroke)).toBe(false);
   });
+
+  it("preset 'mono' uses a stronger highlight fill opacity than 'standard'", () => {
+    // 彩度の無い mono では塗りが薄いと「枠線だけ強調されて見える」ので、
+    // standard より高い fill-opacity を使う設計。
+    expect(PALETTES["mono"].highlightFillOpacity).toBeGreaterThan(
+      PALETTES["standard"].highlightFillOpacity,
+    );
+    // 許容範囲（0〜1 の確率値）
+    for (const p of Object.values(PALETTES)) {
+      expect(p.highlightFillOpacity).toBeGreaterThanOrEqual(0);
+      expect(p.highlightFillOpacity).toBeLessThanOrEqual(1);
+    }
+  });
 });
