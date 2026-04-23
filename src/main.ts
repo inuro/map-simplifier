@@ -12,6 +12,10 @@ import {
   setSelectionOverlayData,
 } from "./map/selectionOverlay";
 import {
+  ensureHighlightOverlay,
+  setHighlightOverlayData,
+} from "./map/highlightOverlay";
+import {
   DEFAULT_VIEW,
   decodeHashToView,
   encodeViewToHash,
@@ -20,6 +24,7 @@ import {
 import {
   EditStateStore,
   toHiddenFeatureCollection,
+  toHighlightFeatureCollection,
   type EditStateSnapshot,
 } from "./state/editState";
 import { SelectionStore, toSelectionFeatureCollection } from "./state/selectionStore";
@@ -38,6 +43,7 @@ const presetStandardBtn = requireEl("preset-standard", HTMLButtonElement);
 const presetMonoBtn = requireEl("preset-mono", HTMLButtonElement);
 const undoBtn = requireEl("undo", HTMLButtonElement);
 const redoBtn = requireEl("redo", HTMLButtonElement);
+const highlightBtn = requireEl("highlight", HTMLButtonElement);
 const deleteBtn = requireEl("delete", HTMLButtonElement);
 const resetEditsBtn = requireEl("reset-edits", HTMLButtonElement);
 const selectionCountEl = requireEl("selection-count", HTMLSpanElement);
@@ -80,6 +86,11 @@ map.on("moveend", syncHash);
 map.on("zoomend", syncHash);
 
 function refreshOverlays(): void {
+  // 描画順（下 → 上）：base → highlight → hidden mask → selection stroke。
+  // 先に addLayer した方が下に入るので、呼び出し順は highlight → hidden → selection。
+  // すでに layer がある 2 回目以降は ensure*Overlay が paint/data を更新するのみで、
+  // layer 順序は最初の呼び出し順で固定される。
+  ensureHighlightOverlay(map, toHighlightFeatureCollection(editState.state.highlighted));
   ensureHiddenOverlay(map, currentPreset, toHiddenFeatureCollection(editState.state.hidden));
   ensureSelectionOverlay(map, toSelectionFeatureCollection(selectionStore.state));
 }
@@ -99,7 +110,8 @@ map.on("styledata", () => {
 
 editState.subscribe((s) => {
   setHiddenOverlayData(map, toHiddenFeatureCollection(s.hidden));
-  resetEditsBtn.disabled = s.hidden.length === 0;
+  setHighlightOverlayData(map, toHighlightFeatureCollection(s.highlighted));
+  resetEditsBtn.disabled = s.hidden.length === 0 && s.highlighted.length === 0;
 });
 resetEditsBtn.disabled = true;
 
@@ -108,6 +120,7 @@ function updateSelectionUI(): void {
   selectionCountEl.textContent = n > 0 ? `選択: ${n}` : "";
   setSelectionOverlayData(map, toSelectionFeatureCollection(selectionStore.state));
   deleteBtn.disabled = n === 0;
+  highlightBtn.disabled = n === 0;
 }
 selectionStore.subscribe(() => updateSelectionUI());
 updateSelectionUI();
@@ -187,8 +200,25 @@ function deleteSelected(): void {
   history.push(before);
 }
 
+// 選択中の全 feature に強調を適用。すでに全員強調されている場合は解除。
+// 混在時（一部強調・一部未強調）は「未強調のものを全て強調」で揃える。
+function toggleHighlightSelected(): void {
+  const items = selectionStore.state;
+  if (items.length === 0) return;
+  const before = editState.snapshot();
+  const allHighlighted = items.every((i) => editState.isHighlighted(i));
+  if (allHighlighted) {
+    editState.unhighlightMatching(items);
+  } else {
+    const missing = items.filter((i) => !editState.isHighlighted(i));
+    editState.highlightMany(missing);
+  }
+  history.push(before);
+}
+
 function resetAllEdits(): void {
-  if (editState.state.hidden.length === 0) return;
+  const s = editState.state;
+  if (s.hidden.length === 0 && s.highlighted.length === 0) return;
   const before = editState.snapshot();
   editState.clearAll();
   history.push(before);
@@ -205,6 +235,7 @@ function redo(): void {
 }
 
 deleteBtn.addEventListener("click", deleteSelected);
+highlightBtn.addEventListener("click", toggleHighlightSelected);
 resetEditsBtn.addEventListener("click", resetAllEdits);
 undoBtn.addEventListener("click", undo);
 redoBtn.addEventListener("click", redo);
