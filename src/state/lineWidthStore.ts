@@ -1,25 +1,33 @@
 /**
  * ライン幅の調整 factor を保持する store。
  *
- * 対象 4 カテゴリ（道路・鉄道・河川・境界）ごとに 1.0 を基準とする倍率。
+ * レイヤ表示カテゴリごとに 1.0 を基準とする倍率。
  * +/- は幾何級数（×1.25 / ÷1.25）、クランプは [0.2, 8.0]。
  *
  * 履歴（Undo/Redo）には乗せない — view 設定的な扱い（#24 設計判断）。
  */
 
-export type LineWidthCategory = "road" | "railway" | "river" | "boundary";
+import type { LayerVisibilityCategory } from "./layerVisibilityStore";
 
-export interface LineWidthFactors {
-  road: number;
-  railway: number;
-  river: number;
-  boundary: number;
-}
+export type LineWidthCategory = LayerVisibilityCategory;
+
+export const LINE_WIDTH_CATEGORIES = [
+  "water",
+  "road",
+  "roadEdge",
+  "railway",
+  "building",
+  "boundary",
+] as const satisfies readonly LineWidthCategory[];
+
+export type LineWidthFactors = Record<LineWidthCategory, number>;
 
 export const DEFAULT_LINE_WIDTH_FACTORS: LineWidthFactors = {
+  water: 1,
   road: 1,
+  roadEdge: 1,
   railway: 1,
-  river: 1,
+  building: 1,
   boundary: 1,
 };
 
@@ -61,12 +69,7 @@ export class LineWidthStore {
 
   reset(): void {
     const def = DEFAULT_LINE_WIDTH_FACTORS;
-    if (
-      nearlyEqual(this._factors.road, def.road) &&
-      nearlyEqual(this._factors.railway, def.railway) &&
-      nearlyEqual(this._factors.river, def.river) &&
-      nearlyEqual(this._factors.boundary, def.boundary)
-    ) {
+    if (LINE_WIDTH_CATEGORIES.every((c) => nearlyEqual(this._factors[c], def[c]))) {
       return;
     }
     this._factors = { ...def };

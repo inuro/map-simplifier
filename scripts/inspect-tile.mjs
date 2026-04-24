@@ -1,4 +1,4 @@
-// Inspect layer names + feature counts in a 国土地理院 experimental_bvmap tile.
+// Inspect layer names + feature counts in a 国土地理院 optimal_bvmap-v1 tile.
 // Usage: node scripts/inspect-tile.mjs [z x y]
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
@@ -8,7 +8,7 @@ const z = Number(zArg ?? 13);
 const x = Number(xArg ?? 7276);
 const y = Number(yArg ?? 3225);
 
-const url = `https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/${z}/${x}/${y}.pbf`;
+const url = `https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/${z}/${x}/${y}.pbf`;
 const res = await fetch(url);
 if (!res.ok) {
   console.error(`fetch failed: ${res.status}`);

@@ -80,6 +80,150 @@ test("preset toggle switches style name and keeps canvas visible", async ({ page
   );
 });
 
+test("coordinate input moves the map center and keeps the current zoom", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  const beforeZoom = await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { getZoom(): number } };
+    return g.__mlMap!.getZoom();
+  });
+
+  await page.locator("#goto-coordinate-input").fill("35.65858, 139.74543");
+  await page.locator("#goto-coordinate button").click();
+
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getCenter(): { lat: number; lng: number } };
+      };
+      const c = g.__mlMap!.getCenter();
+      return Math.abs(c.lat - 35.65858) < 0.0001 && Math.abs(c.lng - 139.74543) < 0.0001;
+    },
+    null,
+    { timeout: 5_000 },
+  );
+  await page.waitForFunction(
+    () => /^#\d+(\.\d+)?\/35\.65858\/139\.74543$/.test(window.location.hash),
+    null,
+    { timeout: 5_000 },
+  );
+
+  const after = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getCenter(): { lat: number; lng: number }; getZoom(): number };
+    };
+    const c = g.__mlMap!.getCenter();
+    return { lat: c.lat, lng: c.lng, zoom: g.__mlMap!.getZoom(), hash: window.location.hash };
+  });
+  expect(after.lat).toBeCloseTo(35.65858, 4);
+  expect(after.lng).toBeCloseTo(139.74543, 4);
+  expect(after.zoom).toBeCloseTo(beforeZoom, 5);
+  expect(after.hash).toMatch(/^#\d+(\.\d+)?\/35\.65858\/139\.74543$/);
+  await expect(page.locator("#goto-coordinate-input")).toHaveValue("35.65858, 139.74543");
+  await expect(page.locator("#goto-coordinate-status")).toHaveText("移動しました");
+});
+
+test("coordinate input rejects invalid coordinates without moving", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  const before = await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { getCenter(): { lat: number; lng: number } } };
+    const c = g.__mlMap!.getCenter();
+    return { lat: c.lat, lng: c.lng };
+  });
+
+  await page.locator("#goto-coordinate-input").fill("91, 139.767");
+  await page.locator("#goto-coordinate button").click();
+
+  await expect(page.locator("#goto-coordinate-input")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.locator("#goto-coordinate-status")).toHaveText("緯度, 経度で入力");
+
+  const after = await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { getCenter(): { lat: number; lng: number } } };
+    const c = g.__mlMap!.getCenter();
+    return { lat: c.lat, lng: c.lng };
+  });
+  expect(after.lat).toBeCloseTo(before.lat, 8);
+  expect(after.lng).toBeCloseTo(before.lng, 8);
+});
+
+test("layer visibility popover toggles building, water, and road edge layers", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  await page.locator("#layer-visibility-toggle").click();
+  await expect(page.locator("#layer-visibility-popover")).toBeVisible();
+
+  await page.locator('input[data-layer-visibility="building"]').uncheck();
+  await page.waitForFunction(() => {
+    const g = window as unknown as {
+      __mlMap?: { getLayoutProperty(id: string, prop: string): unknown };
+    };
+    return (
+      g.__mlMap!.getLayoutProperty("building-fill", "visibility") === "none" &&
+      g.__mlMap!.getLayoutProperty("building-outline-line", "visibility") === "none" &&
+      g.__mlMap!.getLayoutProperty("structure-outline-line", "visibility") === "none" &&
+      g.__mlMap!.getLayoutProperty("structure-fill", "visibility") === "none"
+    );
+  });
+
+  await page.locator('input[data-layer-visibility="water"]').uncheck();
+  const waterVisibility = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getLayoutProperty(id: string, prop: string): unknown };
+    };
+    return {
+      waterarea: g.__mlMap!.getLayoutProperty("waterarea-fill", "visibility"),
+      waterareaOutline: g.__mlMap!.getLayoutProperty("waterarea-outline-line", "visibility"),
+      waterline: g.__mlMap!.getLayoutProperty("waterline-line", "visibility"),
+      river: g.__mlMap!.getLayoutProperty("river-line", "visibility"),
+    };
+  });
+  expect(waterVisibility).toEqual({
+    waterarea: "none",
+    waterareaOutline: "none",
+    waterline: "none",
+    river: "none",
+  });
+
+  await page.locator('input[data-layer-visibility="roadEdge"]').uncheck();
+  const roadEdgeVisibility = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getLayoutProperty(id: string, prop: string): unknown };
+    };
+    return {
+      center: g.__mlMap!.getLayoutProperty("road-line", "visibility"),
+      edge: g.__mlMap!.getLayoutProperty("road-edge-line", "visibility"),
+      component: g.__mlMap!.getLayoutProperty("road-component-line", "visibility"),
+    };
+  });
+  expect(roadEdgeVisibility).toEqual({
+    center: "visible",
+    edge: "none",
+    component: "none",
+  });
+
+  await page.locator('input[data-layer-visibility="building"]').check();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const g = window as unknown as {
+          __mlMap?: { getLayoutProperty(id: string, prop: string): unknown };
+        };
+        return g.__mlMap!.getLayoutProperty("building-fill", "visibility");
+      }),
+    )
+    .toBe("visible");
+});
+
 test("clicking a feature selects it; shift+click adds; Esc clears", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
@@ -129,12 +273,20 @@ test("clicking a feature selects it; shift+click adds; Esc clears", async ({ pag
     const ch = canvas.clientHeight;
     const layers = [
       "waterarea-fill",
-      "wstructurea-fill",
+      "waterarea-outline-line",
+      "waterline-line",
       "river-line",
       "railway-line",
+      "rail-track-line",
       "road-line",
+      "road-edge-line",
+      "road-component-line",
       "building-fill",
+      "building-outline-line",
+      "structure-fill",
+      "structure-outline-line",
       "boundary-line",
+      "adminarea-boundary-line",
     ];
     const seen = new Map<string, [number, number]>();
     for (let x = 40; x < cw && seen.size < 2; x += 30) {
@@ -200,7 +352,7 @@ test("clicking a feature selects it; shift+click adds; Esc clears", async ({ pag
   expect(final).toBe(0);
 });
 
-test("select → delete → undo → redo cycles the hidden overlay", async ({ page }) => {
+test("select → delete → undo → redo cycles the hidden list (feature-state)", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
     timeout: 30_000,
@@ -246,12 +398,20 @@ test("select → delete → undo → redo cycles the hidden overlay", async ({ p
     const ch = canvas.clientHeight;
     const layers = [
       "waterarea-fill",
-      "wstructurea-fill",
+      "waterarea-outline-line",
+      "waterline-line",
       "river-line",
       "railway-line",
+      "rail-track-line",
       "road-line",
+      "road-edge-line",
+      "road-component-line",
       "building-fill",
+      "building-outline-line",
+      "structure-fill",
+      "structure-outline-line",
       "boundary-line",
+      "adminarea-boundary-line",
     ];
     for (let x = 40; x < cw; x += 30) {
       for (let y = 40; y < ch; y += 30) {
@@ -284,11 +444,10 @@ test("select → delete → undo → redo cycles the hidden overlay", async ({ p
 
   const hiddenCount = async (): Promise<number> =>
     page.evaluate(() => {
-      const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
+      const g = window as unknown as {
+        __editState?: { state: { hidden: unknown[] } };
+      };
+      return g.__editState?.state.hidden.length ?? 0;
     });
 
   // 削除ボタン → 非表示1件、selection は空、リセット/undo 有効
@@ -351,12 +510,20 @@ test("Delete key deletes selection; Cmd+Z undoes", async ({ page }) => {
           m.queryRenderedFeatures([x, y], {
             layers: [
               "waterarea-fill",
-              "wstructurea-fill",
+              "waterarea-outline-line",
+              "waterline-line",
               "river-line",
               "railway-line",
+              "rail-track-line",
               "road-line",
+              "road-edge-line",
+              "road-component-line",
               "building-fill",
+              "building-outline-line",
+              "structure-fill",
+              "structure-outline-line",
               "boundary-line",
+              "adminarea-boundary-line",
             ],
           }).length > 0
         )
@@ -385,11 +552,10 @@ test("Delete key deletes selection; Cmd+Z undoes", async ({ page }) => {
 
   const hidden = async (): Promise<number> =>
     page.evaluate(() => {
-      const g = window as unknown as { __mlMap?: { getSource(id: string): unknown } };
-      const src = g.__mlMap?.getSource("hidden-overlay") as
-        | { _data?: { features?: unknown[] } }
-        | undefined;
-      return src?._data?.features?.length ?? 0;
+      const g = window as unknown as {
+        __editState?: { state: { hidden: unknown[] } };
+      };
+      return g.__editState?.state.hidden.length ?? 0;
     });
 
   await page.keyboard.press("Delete");
@@ -439,12 +605,20 @@ test("select → 強調 → toggle off → undo restores", async ({ page }) => {
           m.queryRenderedFeatures([x, y], {
             layers: [
               "waterarea-fill",
-              "wstructurea-fill",
+              "waterarea-outline-line",
+              "waterline-line",
               "river-line",
               "railway-line",
+              "rail-track-line",
               "road-line",
+              "road-edge-line",
+              "road-component-line",
               "building-fill",
+              "building-outline-line",
+              "structure-fill",
+              "structure-outline-line",
               "boundary-line",
+              "adminarea-boundary-line",
             ],
           }).length > 0
         )
@@ -508,6 +682,99 @@ test("select → 強調 → toggle off → undo restores", async ({ page }) => {
   expect(await highlightCount()).toBe(1);
 });
 
+test("deleting a highlighted selection removes the highlight overlay too", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { setZoom(z: number): void } };
+    g.__mlMap?.setZoom(15);
+  });
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 15 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  const pt = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: {
+        queryRenderedFeatures(p: [number, number], opts?: { layers?: string[] }): Array<unknown>;
+      };
+    };
+    const m = g.__mlMap!;
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const layers = [
+      "waterarea-fill",
+      "waterarea-outline-line",
+      "waterline-line",
+      "river-line",
+      "railway-line",
+      "rail-track-line",
+      "road-line",
+      "road-edge-line",
+      "road-component-line",
+      "building-fill",
+      "building-outline-line",
+      "structure-fill",
+      "structure-outline-line",
+      "boundary-line",
+      "adminarea-boundary-line",
+    ];
+    for (let x = 40; x < canvas.clientWidth; x += 30) {
+      for (let y = 40; y < canvas.clientHeight; y += 30) {
+        if (m.queryRenderedFeatures([x, y], { layers }).length > 0) return [x, y];
+      }
+    }
+    return null;
+  });
+  expect(pt).not.toBeNull();
+  const [x, y] = pt as [number, number];
+
+  await page.evaluate(
+    ({ x, y }) => {
+      const g = window as unknown as {
+        __mlMap?: { unproject(p: [number, number]): unknown; fire(ev: string, payload: unknown): void };
+      };
+      const m = g.__mlMap!;
+      m.fire("click", {
+        point: { x, y },
+        lngLat: m.unproject([x, y]),
+        originalEvent: new MouseEvent("click"),
+      });
+    },
+    { x, y },
+  );
+
+  const counts = async (): Promise<{ hidden: number; highlighted: number }> =>
+    page.evaluate(() => {
+      const g = window as unknown as {
+        __editState?: { state: { hidden: unknown[]; highlighted: unknown[] } };
+      };
+      return {
+        hidden: g.__editState?.state.hidden.length ?? 0,
+        highlighted: g.__editState?.state.highlighted.length ?? 0,
+      };
+    });
+
+  await page.locator("#highlight").click();
+  expect((await counts()).highlighted).toBe(1);
+
+  await page.locator("#delete").click();
+  expect(await counts()).toEqual({ hidden: 1, highlighted: 0 });
+});
+
 test("shift+drag rubber band selects multiple features", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
@@ -566,7 +833,7 @@ test("shift+drag rubber band selects multiple features", async ({ page }) => {
   expect(selected).toBeGreaterThan(1);
 });
 
-test("line-width popover + / - / reset changes paint-property", async ({ page }) => {
+test("layer popover combines visibility and per-layer line width controls", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
     timeout: 30_000,
@@ -582,9 +849,13 @@ test("line-width popover + / - / reset changes paint-property", async ({ page })
   // 初期は interpolate 式（配列形）で stop 値が [0.3, 1.0, 2.4]
   expect(Array.isArray(initialRoad)).toBe(true);
 
-  // ポップオーバーを開く
-  await page.locator("#line-width-toggle").click();
-  await expect(page.locator("#line-width-popover")).toBeVisible();
+  // レイヤメニューに統合され、独立した「太さ…」メニューは持たない。
+  await expect(page.locator("#line-width-toggle")).toHaveCount(0);
+  await page.locator("#layer-visibility-toggle").click();
+  await expect(page.locator("#layer-visibility-popover")).toBeVisible();
+  await expect(page.locator('input[data-layer-visibility="roadEdge"]')).toBeVisible();
+  await expect(page.locator('button[data-lw="roadEdge"][data-op="inc"]')).toBeVisible();
+  await expect(page.locator('button[data-lw="building"][data-op="inc"]')).toBeVisible();
 
   // 道路を太く（×1.25）
   await page.locator('button[data-lw="road"][data-op="inc"]').click();
@@ -603,6 +874,21 @@ test("line-width popover + / - / reset changes paint-property", async ({ page })
 
   // 表示ラベルも更新される
   await expect(page.locator('[data-lw-value="road"]')).toHaveText("1.25×");
+
+  // 道路枠線も独立して太くできる
+  await page.locator('button[data-lw="roadEdge"][data-op="inc"]').click();
+  const roadEdge = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getPaintProperty(id: string, prop: string): unknown };
+    };
+    return {
+      edge: g.__mlMap!.getPaintProperty("road-edge-line", "line-width"),
+      component: g.__mlMap!.getPaintProperty("road-component-line", "line-width"),
+    };
+  });
+  expect(roadEdge.edge).toBeCloseTo(0.55 * 1.25, 5);
+  expect(roadEdge.component).toBeCloseTo(0.45 * 1.25, 5);
+  await expect(page.locator('[data-lw-value="roadEdge"]')).toHaveText("1.25×");
 
   // 鉄道を細く
   await page.locator('button[data-lw="railway"][data-op="dec"]').click();
@@ -623,11 +909,13 @@ test("line-width popover + / - / reset changes paint-property", async ({ page })
     };
     return {
       road: g.__mlMap!.getPaintProperty("road-line", "line-width"),
+      roadEdge: g.__mlMap!.getPaintProperty("road-edge-line", "line-width"),
       railway: g.__mlMap!.getPaintProperty("railway-line", "line-width"),
     };
   });
   const resetStops = (reset.road as unknown[]).slice(3).filter((_, i) => i % 2 === 1) as number[];
   expect(resetStops[0]).toBeCloseTo(0.3, 5);
+  expect(reset.roadEdge).toBeCloseTo(0.55, 5);
   expect(reset.railway).toBeCloseTo(1.1, 5);
 });
 

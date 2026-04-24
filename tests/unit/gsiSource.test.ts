@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   GSI_BVMAP_TILE_URL,
+  GSI_BVMAP_TILE_URL_WITH_IDS,
   GSI_ATTRIBUTION,
   buildGsiVectorSource,
 } from "../../src/map/gsiSource";
 
 describe("GSI vector tile source", () => {
-  it("points at the experimental bvmap endpoint", () => {
+  it("points at the optimal bvmap endpoint", () => {
     expect(GSI_BVMAP_TILE_URL).toBe(
-      "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf",
+      "https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf",
+    );
+  });
+
+  it("exposes a gsi-ids:// wrapped URL for the id-injecting protocol (#26)", () => {
+    expect(GSI_BVMAP_TILE_URL_WITH_IDS).toBe(
+      "gsi-ids://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf",
     );
   });
 
@@ -18,10 +25,10 @@ describe("GSI vector tile source", () => {
     expect(GSI_ATTRIBUTION).toMatch(/(国土地理院|地理院タイル)/);
   });
 
-  it("builds a MapLibre vector source config with tiles, minzoom, maxzoom", () => {
+  it("builds a MapLibre vector source using the gsi-ids:// URL", () => {
     const src = buildGsiVectorSource();
     expect(src.type).toBe("vector");
-    expect(src.tiles).toEqual([GSI_BVMAP_TILE_URL]);
+    expect(src.tiles).toEqual([GSI_BVMAP_TILE_URL_WITH_IDS]);
     expect(src.minzoom).toBe(4);
     expect(src.maxzoom).toBe(16);
     expect(src.attribution).toBe(GSI_ATTRIBUTION);

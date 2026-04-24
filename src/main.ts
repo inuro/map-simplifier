@@ -1,12 +1,9 @@
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { buildBaseStyle, type Preset } from "./map/style";
+import { buildBaseStyle, HIDEABLE_LAYER_IDS, type Preset } from "./map/style";
 import { GSI_ATTRIBUTION } from "./map/gsiSource";
-import {
-  ensureHiddenOverlay,
-  setHiddenOverlayData,
-  HIDEABLE_LAYER_IDS,
-} from "./map/overlay";
+import { registerGsiIdsProtocol } from "./map/idProtocol";
+import { HiddenSync } from "./map/hiddenSync";
 import {
   ensureSelectionOverlay,
   setSelectionOverlayData,
@@ -17,21 +14,29 @@ import {
 } from "./map/highlightOverlay";
 import { attachRubberBand } from "./map/rubberBand";
 import { applyLineWidthFactors } from "./map/lineWidth";
+import { applyLayerVisibility } from "./map/layerVisibility";
 import {
+  LINE_WIDTH_CATEGORIES,
   LineWidthStore,
   LINE_WIDTH_MAX,
   LINE_WIDTH_MIN,
   type LineWidthCategory,
 } from "./state/lineWidthStore";
 import {
+  LAYER_VISIBILITY_CATEGORIES,
+  LayerVisibilityStore,
+  isSourceLayerVisible,
+  type LayerVisibilityCategory,
+} from "./state/layerVisibilityStore";
+import {
   DEFAULT_VIEW,
   decodeHashToView,
   encodeViewToHash,
   type ViewState,
 } from "./state/viewState";
+import { formatLatLng, parseLatLngInput } from "./state/latLngInput";
 import {
   EditStateStore,
-  toHiddenFeatureCollection,
   toHighlightFeatureCollection,
   type EditStateSnapshot,
 } from "./state/editState";
@@ -47,6 +52,9 @@ function requireEl<T extends Element>(id: string, ctor: new (...a: never[]) => T
 
 const mapRoot = requireEl("map", HTMLElement);
 const exportButton = requireEl("export-png", HTMLButtonElement);
+const gotoCoordinateForm = requireEl("goto-coordinate", HTMLFormElement);
+const gotoCoordinateInput = requireEl("goto-coordinate-input", HTMLInputElement);
+const gotoCoordinateStatus = requireEl("goto-coordinate-status", HTMLSpanElement);
 const presetStandardBtn = requireEl("preset-standard", HTMLButtonElement);
 const presetMonoBtn = requireEl("preset-mono", HTMLButtonElement);
 const undoBtn = requireEl("undo", HTMLButtonElement);
@@ -55,8 +63,8 @@ const highlightBtn = requireEl("highlight", HTMLButtonElement);
 const deleteBtn = requireEl("delete", HTMLButtonElement);
 const resetEditsBtn = requireEl("reset-edits", HTMLButtonElement);
 const selectionCountEl = requireEl("selection-count", HTMLSpanElement);
-const lineWidthToggle = requireEl("line-width-toggle", HTMLButtonElement);
-const lineWidthPopover = requireEl("line-width-popover", HTMLElement);
+const layerVisibilityToggle = requireEl("layer-visibility-toggle", HTMLButtonElement);
+const layerVisibilityPopover = requireEl("layer-visibility-popover", HTMLElement);
 const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
 
 const initialView: ViewState = decodeHashToView(window.location.hash) ?? DEFAULT_VIEW;
@@ -65,6 +73,10 @@ const editState = new EditStateStore();
 const selectionStore = new SelectionStore();
 const history = new History<EditStateSnapshot>();
 const lineWidthStore = new LineWidthStore();
+const layerVisibilityStore = new LayerVisibilityStore();
+
+// GSI タイルに feature.id を注入する独自プロトコル。Map コンストラクタより前に登録する。
+registerGsiIdsProtocol(maplibregl);
 
 const map: MapLibreMap = new maplibregl.Map({
   container: mapRoot,
@@ -101,35 +113,113 @@ function syncHash(): void {
 map.on("moveend", syncHash);
 map.on("zoomend", syncHash);
 
-function refreshOverlays(): void {
-  // 描画順（下 → 上）：base → highlight → hidden mask → selection stroke。
-  // 先に addLayer した方が下に入るので、呼び出し順は highlight → hidden → selection。
-  // すでに layer がある 2 回目以降は ensure*Overlay が paint/data を更新するのみで、
-  // layer 順序は最初の呼び出し順で固定される。
-  ensureHighlightOverlay(map, toHighlightFeatureCollection(editState.state.highlighted));
-  ensureHiddenOverlay(map, currentPreset, toHiddenFeatureCollection(editState.state.hidden));
-  ensureSelectionOverlay(map, toSelectionFeatureCollection(selectionStore.state));
+function setCoordinateStatus(kind: "idle" | "error" | "success", message: string): void {
+  gotoCoordinateStatus.textContent = message;
+  if (kind === "idle") {
+    gotoCoordinateStatus.removeAttribute("data-kind");
+    gotoCoordinateInput.removeAttribute("aria-invalid");
+    return;
+  }
+  gotoCoordinateStatus.dataset["kind"] = kind;
+  if (kind === "error") {
+    gotoCoordinateInput.setAttribute("aria-invalid", "true");
+  } else {
+    gotoCoordinateInput.removeAttribute("aria-invalid");
+  }
+}
+
+gotoCoordinateInput.addEventListener("input", () => {
+  if (gotoCoordinateInput.getAttribute("aria-invalid") === "true") {
+    setCoordinateStatus("idle", "");
+  }
+});
+
+gotoCoordinateForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const target = parseLatLngInput(gotoCoordinateInput.value);
+  if (!target) {
+    setCoordinateStatus("error", "緯度, 経度で入力");
+    gotoCoordinateInput.select();
+    return;
+  }
+  gotoCoordinateInput.value = formatLatLng(target);
+  map.jumpTo({
+    center: [target.lng, target.lat],
+    zoom: map.getZoom(),
+  });
+  syncHash();
+  setCoordinateStatus("success", "移動しました");
+});
+
+const hiddenSync = new HiddenSync({
+  map,
+  getHidden: () => editState.state.hidden,
+});
+
+function refreshNonHiddenOverlays(): void {
+  // highlight → selection の順で重ねる。hidden は feature-state に寄せたので overlay 不要。
+  // highlight は preset に応じて色が変わるので、毎回 currentPreset を渡して paint を追従させる。
+  ensureHighlightOverlay(
+    map,
+    currentPreset,
+    toHighlightFeatureCollection(
+      editState.state.highlighted.filter((f) =>
+        isSourceLayerVisible(f.sourceLayer, layerVisibilityStore.state),
+      ),
+    ),
+  );
+  ensureSelectionOverlay(
+    map,
+    toSelectionFeatureCollection(
+      selectionStore.state.filter((f) =>
+        isSourceLayerVisible(f.sourceLayer, layerVisibilityStore.state),
+      ),
+    ),
+  );
 }
 
 map.on("load", () => {
-  refreshOverlays();
+  refreshNonHiddenOverlays();
+  applyLayerVisibility(map, layerVisibilityStore.state);
   applyLineWidthFactors(map, lineWidthStore.factors);
+  hiddenSync.syncAll();
   document.body.dataset["mapReady"] = "true";
 });
 
 // preset 切替は setStyle を伴い overlay を飛ばすことがある。
-// styledata はその後何度か発火するが、isStyleLoaded() が真になってから
-// overlay を復元する（もしくは色を追従させる）。
-// line-width factor も preset 切替で初期値に戻るので再適用する。
+// styledata はその後何度か発火するが、isStyleLoaded() が真になってから復元する。
 map.on("styledata", () => {
   if (!map.isStyleLoaded()) return;
-  refreshOverlays();
+  refreshNonHiddenOverlays();
+  applyLayerVisibility(map, layerVisibilityStore.state);
   applyLineWidthFactors(map, lineWidthStore.factors);
+  hiddenSync.syncAll();
+});
+
+// 新しいタイルがロードされたときに hidden 同期を再適用。
+// sourcedata は多重発火するが syncAll は冪等なので問題ない。
+map.on("sourcedata", (e) => {
+  if (e.sourceId !== "gsi") return;
+  if (!e.isSourceLoaded) return;
+  hiddenSync.syncAll();
+});
+
+// zoom や pan で「cache 済み」のタイルに戻った場合、sourcedata が発火しない
+// ケースがあるため、idle（描画が落ち着いた時）でも同期を行う。冪等。
+map.on("idle", () => {
+  hiddenSync.syncAll();
 });
 
 editState.subscribe((s) => {
-  setHiddenOverlayData(map, toHiddenFeatureCollection(s.hidden));
-  setHighlightOverlayData(map, toHighlightFeatureCollection(s.highlighted));
+  setHighlightOverlayData(
+    map,
+    toHighlightFeatureCollection(
+      s.highlighted.filter((f) =>
+        isSourceLayerVisible(f.sourceLayer, layerVisibilityStore.state),
+      ),
+    ),
+  );
+  hiddenSync.syncAll();
   resetEditsBtn.disabled = s.hidden.length === 0 && s.highlighted.length === 0;
 });
 resetEditsBtn.disabled = true;
@@ -137,7 +227,14 @@ resetEditsBtn.disabled = true;
 function updateSelectionUI(): void {
   const n = selectionStore.state.length;
   selectionCountEl.textContent = n > 0 ? `選択: ${n}` : "";
-  setSelectionOverlayData(map, toSelectionFeatureCollection(selectionStore.state));
+  setSelectionOverlayData(
+    map,
+    toSelectionFeatureCollection(
+      selectionStore.state.filter((f) =>
+        isSourceLayerVisible(f.sourceLayer, layerVisibilityStore.state),
+      ),
+    ),
+  );
   deleteBtn.disabled = n === 0;
   highlightBtn.disabled = n === 0;
 }
@@ -156,12 +253,14 @@ if (import.meta.env.DEV) {
     __selectionStore?: SelectionStore;
     __history?: History<EditStateSnapshot>;
     __lineWidthStore?: LineWidthStore;
+    __layerVisibilityStore?: LayerVisibilityStore;
   };
   w.__mlMap = map;
   w.__editState = editState;
   w.__selectionStore = selectionStore;
   w.__history = history;
   w.__lineWidthStore = lineWidthStore;
+  w.__layerVisibilityStore = layerVisibilityStore;
 }
 
 function applyPreset(next: Preset): void {
@@ -174,12 +273,23 @@ function applyPreset(next: Preset): void {
 presetStandardBtn.addEventListener("click", () => applyPreset("standard"));
 presetMonoBtn.addEventListener("click", () => applyPreset("mono"));
 
+// 選択対象は「hidden でない feature」のみ。hidden は opacity 0 で描画されるが
+// queryRenderedFeatures は不可視でも返すため、明示的にフィルタする。
+function filterVisible<T extends { sourceLayer?: string; geometry: import("geojson").Geometry }>(
+  features: ReadonlyArray<T>,
+): T[] {
+  return features.filter(
+    (f) =>
+      isSourceLayerVisible(f.sourceLayer ?? "", layerVisibilityStore.state) &&
+      !editState.isHidden({ sourceLayer: f.sourceLayer ?? "", geometry: f.geometry }),
+  );
+}
+
 // 選択操作（click / shift+click / 空クリックで clear）
 map.on("click", (e) => {
   const pt: [number, number] = [e.point.x, e.point.y];
-  const features = map.queryRenderedFeatures(pt, {
-    layers: [...HIDEABLE_LAYER_IDS],
-  });
+  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const features = filterVisible(raw);
   if (features.length === 0) {
     selectionStore.clear();
     return;
@@ -200,16 +310,16 @@ map.on("click", (e) => {
 
 map.on("mousemove", (e) => {
   const pt: [number, number] = [e.point.x, e.point.y];
-  const hit = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const hit = filterVisible(raw);
   map.getCanvas().style.cursor = hit.length > 0 ? "pointer" : "";
 });
 
 // Shift+ドラッグで矩形選択（既存選択に追加）。
 attachRubberBand(map, {
   onRelease: (bbox) => {
-    const features = map.queryRenderedFeatures(bbox, {
-      layers: [...HIDEABLE_LAYER_IDS],
-    });
+    const raw = map.queryRenderedFeatures(bbox, { layers: [...HIDEABLE_LAYER_IDS] });
+    const features = filterVisible(raw);
     // 同一 feature が複数レイヤ／タイル境界で重複して返る可能性がある。
     // SelectionStore.add が sourceLayer+geometry で重複排除するため add で流し込む。
     for (const f of features) {
@@ -235,6 +345,7 @@ function deleteSelected(): void {
       properties: i.properties,
     })),
   );
+  editState.unhighlightMatching(items);
   selectionStore.clear();
   history.push(before);
 }
@@ -317,19 +428,67 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- ライン幅調整 UI ----
+// ---- レイヤ表示 / ライン幅調整 UI ----
 
-const LINE_WIDTH_CATEGORIES: LineWidthCategory[] = ["road", "railway", "river", "boundary"];
+function updateLayerVisibilityUI(): void {
+  const state = layerVisibilityStore.state;
+  for (const category of LAYER_VISIBILITY_CATEGORIES) {
+    const input = layerVisibilityPopover.querySelector(
+      `input[data-layer-visibility="${category.id}"]`,
+    );
+    if (input instanceof HTMLInputElement) {
+      input.checked = state[category.id];
+    }
+  }
+}
+
+layerVisibilityStore.subscribe((state) => {
+  applyLayerVisibility(map, state);
+  selectionStore.clear();
+  refreshNonHiddenOverlays();
+  updateLayerVisibilityUI();
+});
+updateLayerVisibilityUI();
+
+layerVisibilityPopover.addEventListener("change", (e) => {
+  const target = e.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const category = target.getAttribute(
+    "data-layer-visibility",
+  ) as LayerVisibilityCategory | null;
+  if (!category || !LAYER_VISIBILITY_CATEGORIES.some((c) => c.id === category)) return;
+  layerVisibilityStore.set(category, target.checked);
+});
+
+function setLayerVisibilityPopoverOpen(open: boolean): void {
+  if (open) {
+    layerVisibilityPopover.hidden = false;
+    layerVisibilityToggle.setAttribute("aria-expanded", "true");
+  } else {
+    layerVisibilityPopover.hidden = true;
+    layerVisibilityToggle.setAttribute("aria-expanded", "false");
+  }
+}
+layerVisibilityToggle.addEventListener("click", () => {
+  setLayerVisibilityPopoverOpen(layerVisibilityPopover.hidden);
+});
+document.addEventListener("click", (e) => {
+  if (layerVisibilityPopover.hidden) return;
+  const t = e.target;
+  if (!(t instanceof Node)) return;
+  if (layerVisibilityPopover.contains(t) || layerVisibilityToggle.contains(t)) return;
+  setLayerVisibilityPopoverOpen(false);
+});
 
 function updateLineWidthUI(): void {
   const f = lineWidthStore.factors;
   for (const cat of LINE_WIDTH_CATEGORIES) {
-    const valueEl = lineWidthPopover.querySelector(`[data-lw-value="${cat}"]`);
+    const valueEl = layerVisibilityPopover.querySelector(`[data-lw-value="${cat}"]`);
     if (valueEl) valueEl.textContent = `${f[cat].toFixed(2)}×`;
-    const decBtn = lineWidthPopover.querySelector(
+    const decBtn = layerVisibilityPopover.querySelector(
       `button[data-lw="${cat}"][data-op="dec"]`,
     );
-    const incBtn = lineWidthPopover.querySelector(
+    const incBtn = layerVisibilityPopover.querySelector(
       `button[data-lw="${cat}"][data-op="inc"]`,
     );
     if (decBtn instanceof HTMLButtonElement) {
@@ -347,39 +506,18 @@ lineWidthStore.subscribe((f) => {
 });
 updateLineWidthUI();
 
-lineWidthPopover.addEventListener("click", (e) => {
+layerVisibilityPopover.addEventListener("click", (e) => {
   const target = e.target;
   if (!(target instanceof HTMLButtonElement)) return;
   const cat = target.getAttribute("data-lw") as LineWidthCategory | null;
   const op = target.getAttribute("data-op");
-  if (!cat || !LINE_WIDTH_CATEGORIES.includes(cat)) return;
+  if (!cat || !(LINE_WIDTH_CATEGORIES as readonly string[]).includes(cat)) return;
   if (op === "inc") lineWidthStore.increase(cat);
   else if (op === "dec") lineWidthStore.decrease(cat);
 });
 
 lineWidthResetBtn.addEventListener("click", () => {
   lineWidthStore.reset();
-});
-
-function setPopoverOpen(open: boolean): void {
-  if (open) {
-    lineWidthPopover.hidden = false;
-    lineWidthToggle.setAttribute("aria-expanded", "true");
-  } else {
-    lineWidthPopover.hidden = true;
-    lineWidthToggle.setAttribute("aria-expanded", "false");
-  }
-}
-lineWidthToggle.addEventListener("click", () => {
-  setPopoverOpen(lineWidthPopover.hidden);
-});
-// ポップオーバー外クリックで閉じる（トグル自身とポップオーバー内クリックは除外）
-document.addEventListener("click", (e) => {
-  if (lineWidthPopover.hidden) return;
-  const t = e.target;
-  if (!(t instanceof Node)) return;
-  if (lineWidthPopover.contains(t) || lineWidthToggle.contains(t)) return;
-  setPopoverOpen(false);
 });
 
 exportButton.addEventListener("click", async () => {

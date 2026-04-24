@@ -112,6 +112,12 @@ export class EditStateStore {
     return this._highlighted.some((h) => keyOf(h) === k);
   }
 
+  /** sourceLayer + geometry (deep-equal) で隠しリストにマッチするか。 */
+  isHidden(input: { sourceLayer: string; geometry: Geometry }): boolean {
+    const k = keyOf(input);
+    return this._hidden.some((h) => keyOf(h) === k);
+  }
+
   // --- snapshot ---
 
   snapshot(): EditStateSnapshot {
