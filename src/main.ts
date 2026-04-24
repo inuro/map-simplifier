@@ -16,6 +16,11 @@ import { attachRubberBand } from "./map/rubberBand";
 import { applyLineWidthFactors } from "./map/lineWidth";
 import { applyLayerVisibility } from "./map/layerVisibility";
 import {
+  SELECTION_HIT_RADIUS_PX,
+  screenDistanceToFeature,
+  type ProjectFn,
+} from "./map/featureDistance";
+import {
   LINE_WIDTH_CATEGORIES,
   LineWidthStore,
   LINE_WIDTH_MAX,
@@ -66,6 +71,10 @@ const selectionCountEl = requireEl("selection-count", HTMLSpanElement);
 const layerVisibilityToggle = requireEl("layer-visibility-toggle", HTMLButtonElement);
 const layerVisibilityPopover = requireEl("layer-visibility-popover", HTMLElement);
 const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
+const appVersionEl = requireEl("app-version", HTMLSpanElement);
+
+// Vite の define で package.json.version から注入される。
+appVersionEl.textContent = `v${__APP_VERSION__}`;
 
 const initialView: ViewState = decodeHashToView(window.location.hash) ?? DEFAULT_VIEW;
 let currentPreset: Preset = "standard";
@@ -285,16 +294,52 @@ function filterVisible<T extends { sourceLayer?: string; geometry: import("geojs
   );
 }
 
+// クリック位置を中心とした小さな bbox を作る。#30
+// 点 query だと線系 feature（道路・鉄道・河川・境界）が線芯ピクセル上以外で拾えないので、
+// SELECTION_HIT_RADIUS_PX の許容範囲で拾ってから screen 距離で最近傍を選ぶ。
+function hitBox(
+  x: number,
+  y: number,
+  r: number,
+): [[number, number], [number, number]] {
+  return [
+    [x - r, y - r],
+    [x + r, y + r],
+  ];
+}
+
+const projectLngLat: ProjectFn = (lng, lat) => {
+  const p = map.project([lng, lat]);
+  return { x: p.x, y: p.y };
+};
+
+function pickNearest<
+  T extends { sourceLayer?: string; geometry: import("geojson").Geometry },
+>(features: ReadonlyArray<T>, x: number, y: number): T | null {
+  if (features.length === 0) return null;
+  const p = { x, y };
+  let best: T | null = null;
+  let bestDist = Infinity;
+  for (const f of features) {
+    const d = screenDistanceToFeature(p, f.geometry, projectLngLat);
+    if (d < bestDist) {
+      bestDist = d;
+      best = f;
+    }
+  }
+  return best;
+}
+
 // 選択操作（click / shift+click / 空クリックで clear）
 map.on("click", (e) => {
-  const pt: [number, number] = [e.point.x, e.point.y];
-  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const bbox = hitBox(e.point.x, e.point.y, SELECTION_HIT_RADIUS_PX);
+  const raw = map.queryRenderedFeatures(bbox, { layers: [...HIDEABLE_LAYER_IDS] });
   const features = filterVisible(raw);
-  if (features.length === 0) {
+  const top = pickNearest(features, e.point.x, e.point.y);
+  if (!top) {
     selectionStore.clear();
     return;
   }
-  const top = features[0]!;
   const input = {
     sourceLayer: top.sourceLayer ?? "",
     geometry: top.geometry,
@@ -309,8 +354,8 @@ map.on("click", (e) => {
 });
 
 map.on("mousemove", (e) => {
-  const pt: [number, number] = [e.point.x, e.point.y];
-  const raw = map.queryRenderedFeatures(pt, { layers: [...HIDEABLE_LAYER_IDS] });
+  const bbox = hitBox(e.point.x, e.point.y, SELECTION_HIT_RADIUS_PX);
+  const raw = map.queryRenderedFeatures(bbox, { layers: [...HIDEABLE_LAYER_IDS] });
   const hit = filterVisible(raw);
   map.getCanvas().style.cursor = hit.length > 0 ? "pointer" : "";
 });

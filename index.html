@@ -34,6 +34,15 @@
         font-size: 14px;
         font-weight: 600;
         letter-spacing: 0.02em;
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      header h1 .version {
+        font-size: 11px;
+        font-weight: 400;
+        color: #888;
+        font-variant-numeric: tabular-nums;
       }
       .coordinate-form {
         display: inline-flex;
@@ -217,7 +226,7 @@
   <body>
     <div id="app">
       <header>
-        <h1>map-simplifier</h1>
+        <h1>map-simplifier<span id="app-version" class="version" aria-label="バージョン"></span></h1>
         <form id="goto-coordinate" class="coordinate-form" aria-label="緯度経度へ移動">
           <label class="sr-only" for="goto-coordinate-input">緯度経度</label>
           <input
