@@ -276,6 +276,18 @@ function applyPreset(next: Preset): void {
   if (next === currentPreset) return;
   currentPreset = next;
   map.setStyle(buildBaseStyle(next), { diff: true });
+  // setStyle({ diff: true }) は custom source/layer を取り去ったうえで
+  // styledata を isStyleLoaded=false のまま 1 回だけ発火し、isStyleLoaded=true の
+  // styledata が後から来ないケースがある（実測）。既存の styledata ハンドラは
+  // isStyleLoaded ガードで早期 return するため overlay が復元されず、特に mono では
+  // 選択の橙縁取りが消失したまま戻らない症状になっていた。
+  // style が落ち着く idle を一度だけ待って、確実に overlay 群を再構築する。
+  map.once("idle", () => {
+    refreshNonHiddenOverlays();
+    applyLayerVisibility(map, layerVisibilityStore.state);
+    applyLineWidthFactors(map, lineWidthStore.factors);
+    hiddenSync.syncAll();
+  });
   presetStandardBtn.setAttribute("aria-pressed", String(next === "standard"));
   presetMonoBtn.setAttribute("aria-pressed", String(next === "mono"));
 }
