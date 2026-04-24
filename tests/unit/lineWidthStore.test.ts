@@ -57,7 +57,8 @@ describe("LineWidthStore", () => {
   it("reset restores all factors to 1.0 and fires listener", () => {
     const s = new LineWidthStore();
     s.increase("road");
-    s.decrease("railway");
+    s.decrease("roadEdge");
+    s.increase("building");
     const l = vi.fn();
     s.subscribe(l);
     s.reset();
@@ -77,7 +78,7 @@ describe("LineWidthStore", () => {
     const s = new LineWidthStore();
     const l = vi.fn();
     s.subscribe(l);
-    s.increase("river");
+    s.increase("water");
     s.decrease("boundary");
     expect(l).toHaveBeenCalledTimes(2);
   });

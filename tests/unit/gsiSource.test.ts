@@ -7,15 +7,15 @@ import {
 } from "../../src/map/gsiSource";
 
 describe("GSI vector tile source", () => {
-  it("points at the experimental bvmap endpoint", () => {
+  it("points at the optimal bvmap endpoint", () => {
     expect(GSI_BVMAP_TILE_URL).toBe(
-      "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf",
+      "https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf",
     );
   });
 
   it("exposes a gsi-ids:// wrapped URL for the id-injecting protocol (#26)", () => {
     expect(GSI_BVMAP_TILE_URL_WITH_IDS).toBe(
-      "gsi-ids://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf",
+      "gsi-ids://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf",
     );
   });
 

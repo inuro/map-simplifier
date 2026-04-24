@@ -6,7 +6,7 @@ import { HIDEABLE_LAYER_IDS } from "./style";
 /**
  * 非表示にしたい feature（`editState.hidden`）と MapLibre の feature-state を同期する。
  *
- * GSI experimental_bvmap は元から feature.id を持たず、本アプリでは `addProtocol('gsi-ids')`
+ * GSI ベクトルタイルは元から feature.id を持たず、本アプリでは `addProtocol('gsi-ids')`
  * がタイル内で連番 id を注入する。しかし同じ「論理 feature」でも **タイルを跨ぐと別の id**
  * になるため、`setFeatureState({id})` を単発で呼ぶだけでは広域にパンされた時に反映されない。
  *

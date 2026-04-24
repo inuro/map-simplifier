@@ -1,12 +1,12 @@
 import { toProtocolUrl } from "./idProtocol";
 
 /**
- * 実タイル URL（国土地理院 experimental_bvmap）。
+ * 実タイル URL（国土地理院 optimal_bvmap-v1）。
  * MapLibre にそのまま渡すと素の pbf（feature.id 無し）になるので、
  * 本アプリでは `gsi-ids://...` プロトコル経由で id 注入した pbf を読む。
  */
 export const GSI_BVMAP_TILE_URL =
-  "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf";
+  "https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf";
 
 /** 実 URL を `gsi-ids://` プロトコルに包んだ source 用 URL。 */
 export const GSI_BVMAP_TILE_URL_WITH_IDS = toProtocolUrl(GSI_BVMAP_TILE_URL);

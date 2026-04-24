@@ -23,6 +23,7 @@
       header {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 12px;
         padding: 8px 12px;
         border-bottom: 1px solid #e0e0e0;
@@ -33,6 +34,48 @@
         font-size: 14px;
         font-weight: 600;
         letter-spacing: 0.02em;
+      }
+      .coordinate-form {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .coordinate-input {
+        width: 160px;
+        box-sizing: border-box;
+        border: 1px solid #aaa;
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+      }
+      .coordinate-input:focus {
+        outline: 2px solid #8eb8ff;
+        outline-offset: 1px;
+      }
+      .coordinate-input[aria-invalid="true"] {
+        border-color: #b42318;
+        background: #fff6f5;
+      }
+      .coordinate-status {
+        font-size: 12px;
+        color: #666;
+        white-space: nowrap;
+      }
+      .coordinate-status[data-kind="error"] {
+        color: #b42318;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
       header .spacer {
         flex: 1;
@@ -90,10 +133,10 @@
         display: inline-flex;
         gap: 6px;
       }
-      .line-width-wrap {
+      .layer-visibility-wrap {
         position: relative;
       }
-      .line-width-popover {
+      .layer-visibility-popover {
         position: absolute;
         top: calc(100% + 6px);
         right: 0;
@@ -104,27 +147,39 @@
         padding: 10px 12px;
         z-index: 10;
         font-size: 13px;
-        min-width: 220px;
+        min-width: 300px;
       }
-      .line-width-popover[hidden] {
+      .layer-visibility-popover[hidden] {
         display: none;
       }
-      .line-width-row {
+      .layer-visibility-row {
         display: grid;
-        grid-template-columns: 3em 1fr 3.2em 1fr;
+        grid-template-columns: minmax(8.5em, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 5px 0;
+        white-space: nowrap;
+      }
+      .layer-visibility-toggle-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .layer-visibility-row input {
+        margin: 0;
+      }
+      .layer-width-control {
+        display: inline-grid;
+        grid-template-columns: 1.8em 3.4em 1.8em;
         align-items: center;
         gap: 6px;
-        padding: 4px 0;
       }
-      .line-width-row > .label {
-        color: #444;
-      }
-      .line-width-row > .value {
+      .layer-width-control > .value {
         text-align: center;
         color: #666;
         font-variant-numeric: tabular-nums;
       }
-      .line-width-row button {
+      .layer-width-control button {
         appearance: none;
         border: 1px solid #aaa;
         background: #fff;
@@ -133,14 +188,14 @@
         cursor: pointer;
         font-size: 14px;
       }
-      .line-width-row button:hover {
+      .layer-width-control button:hover {
         background: #f3f3f3;
       }
-      .line-width-row button:disabled {
+      .layer-width-control button:disabled {
         opacity: 0.4;
         cursor: not-allowed;
       }
-      .line-width-popover .reset {
+      .layer-visibility-popover .reset {
         width: 100%;
         margin-top: 6px;
         padding: 4px 8px;
@@ -150,7 +205,7 @@
         cursor: pointer;
         font-size: 12px;
       }
-      .line-width-popover .reset:hover {
+      .layer-visibility-popover .reset:hover {
         background: #f3f3f3;
       }
       #map {
@@ -163,6 +218,20 @@
     <div id="app">
       <header>
         <h1>map-simplifier</h1>
+        <form id="goto-coordinate" class="coordinate-form" aria-label="緯度経度へ移動">
+          <label class="sr-only" for="goto-coordinate-input">緯度経度</label>
+          <input
+            id="goto-coordinate-input"
+            class="coordinate-input"
+            type="text"
+            inputmode="decimal"
+            autocomplete="off"
+            placeholder="35.681, 139.767"
+            aria-describedby="goto-coordinate-status"
+          />
+          <button class="primary" type="submit">移動</button>
+          <span id="goto-coordinate-status" class="coordinate-status" aria-live="polite"></span>
+        </form>
         <span id="selection-count" class="selection-count" aria-live="polite"></span>
         <span class="spacer"></span>
         <div class="preset-group" role="group" aria-label="スタイルプリセット">
@@ -178,34 +247,76 @@
             編集をリセット
           </button>
         </div>
-        <div class="line-width-wrap">
-          <button id="line-width-toggle" class="primary" type="button" aria-expanded="false" aria-controls="line-width-popover">太さ…</button>
-          <div id="line-width-popover" class="line-width-popover" role="dialog" aria-label="ライン幅調整" hidden>
-            <div class="line-width-row">
-              <span class="label">道路</span>
-              <button type="button" data-lw="road" data-op="dec" aria-label="道路を細く">−</button>
-              <span class="value" data-lw-value="road">1.00×</span>
-              <button type="button" data-lw="road" data-op="inc" aria-label="道路を太く">＋</button>
+        <div class="layer-visibility-wrap">
+          <button id="layer-visibility-toggle" class="primary" type="button" aria-expanded="false" aria-controls="layer-visibility-popover">レイヤ…</button>
+          <div id="layer-visibility-popover" class="layer-visibility-popover" role="dialog" aria-label="レイヤ表示と太さの調整" hidden>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="water" checked />
+                <span>水域</span>
+              </label>
+              <div class="layer-width-control" aria-label="水域の太さ">
+                <button type="button" data-lw="water" data-op="dec" aria-label="水域を細く">−</button>
+                <span class="value" data-lw-value="water">1.00×</span>
+                <button type="button" data-lw="water" data-op="inc" aria-label="水域を太く">＋</button>
+              </div>
             </div>
-            <div class="line-width-row">
-              <span class="label">鉄道</span>
-              <button type="button" data-lw="railway" data-op="dec" aria-label="鉄道を細く">−</button>
-              <span class="value" data-lw-value="railway">1.00×</span>
-              <button type="button" data-lw="railway" data-op="inc" aria-label="鉄道を太く">＋</button>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="road" checked />
+                <span>道路中心線</span>
+              </label>
+              <div class="layer-width-control" aria-label="道路中心線の太さ">
+                <button type="button" data-lw="road" data-op="dec" aria-label="道路中心線を細く">−</button>
+                <span class="value" data-lw-value="road">1.00×</span>
+                <button type="button" data-lw="road" data-op="inc" aria-label="道路中心線を太く">＋</button>
+              </div>
             </div>
-            <div class="line-width-row">
-              <span class="label">河川</span>
-              <button type="button" data-lw="river" data-op="dec" aria-label="河川を細く">−</button>
-              <span class="value" data-lw-value="river">1.00×</span>
-              <button type="button" data-lw="river" data-op="inc" aria-label="河川を太く">＋</button>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="roadEdge" checked />
+                <span>道路枠線</span>
+              </label>
+              <div class="layer-width-control" aria-label="道路枠線の太さ">
+                <button type="button" data-lw="roadEdge" data-op="dec" aria-label="道路枠線を細く">−</button>
+                <span class="value" data-lw-value="roadEdge">1.00×</span>
+                <button type="button" data-lw="roadEdge" data-op="inc" aria-label="道路枠線を太く">＋</button>
+              </div>
             </div>
-            <div class="line-width-row">
-              <span class="label">境界</span>
-              <button type="button" data-lw="boundary" data-op="dec" aria-label="境界を細く">−</button>
-              <span class="value" data-lw-value="boundary">1.00×</span>
-              <button type="button" data-lw="boundary" data-op="inc" aria-label="境界を太く">＋</button>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="railway" checked />
+                <span>鉄道</span>
+              </label>
+              <div class="layer-width-control" aria-label="鉄道の太さ">
+                <button type="button" data-lw="railway" data-op="dec" aria-label="鉄道を細く">−</button>
+                <span class="value" data-lw-value="railway">1.00×</span>
+                <button type="button" data-lw="railway" data-op="inc" aria-label="鉄道を太く">＋</button>
+              </div>
             </div>
-            <button type="button" class="reset" id="line-width-reset">すべて初期値に戻す</button>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="building" checked />
+                <span>建物</span>
+              </label>
+              <div class="layer-width-control" aria-label="建物の輪郭線の太さ">
+                <button type="button" data-lw="building" data-op="dec" aria-label="建物の輪郭線を細く">−</button>
+                <span class="value" data-lw-value="building">1.00×</span>
+                <button type="button" data-lw="building" data-op="inc" aria-label="建物の輪郭線を太く">＋</button>
+              </div>
+            </div>
+            <div class="layer-visibility-row">
+              <label class="layer-visibility-toggle-label">
+                <input type="checkbox" data-layer-visibility="boundary" checked />
+                <span>行政界</span>
+              </label>
+              <div class="layer-width-control" aria-label="行政界の太さ">
+                <button type="button" data-lw="boundary" data-op="dec" aria-label="行政界を細く">−</button>
+                <span class="value" data-lw-value="boundary">1.00×</span>
+                <button type="button" data-lw="boundary" data-op="inc" aria-label="行政界を太く">＋</button>
+              </div>
+            </div>
+            <button type="button" class="reset" id="line-width-reset">太さを初期値に戻す</button>
           </div>
         </div>
         <button id="export-png" class="primary" type="button">PNG書き出し</button>

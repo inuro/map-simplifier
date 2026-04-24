@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildBaseStyle, PALETTES, PRESETS, type Preset } from "../../src/map/style";
+import {
+  buildBaseStyle,
+  HIDEABLE_LAYER_IDS,
+  PALETTES,
+  PRESETS,
+  type Preset,
+} from "../../src/map/style";
 
 // HEX -> {r,g,b} に分解して、R==G==B（グレースケール）かを判定するヘルパ。
 function isGrayscaleHex(hex: string): boolean {
@@ -10,6 +16,10 @@ function isGrayscaleHex(hex: string): boolean {
   const g = (n >> 8) & 0xff;
   const b = n & 0xff;
   return r === g && g === b;
+}
+
+function isNeutralColorString(color: string): boolean {
+  return isGrayscaleHex(color) || color === "rgba(0,0,0,0)";
 }
 
 describe("style presets", () => {
@@ -41,7 +51,7 @@ describe("style presets", () => {
       for (const key of ["fill-color", "line-color", "background-color", "fill-outline-color"]) {
         const v = paint[key];
         if (typeof v === "string") {
-          if (!isGrayscaleHex(v)) {
+          if (!isNeutralColorString(v)) {
             offending.push(`${layer.id}.${key}=${v}`);
           }
         }
@@ -55,6 +65,19 @@ describe("style presets", () => {
     expect(s.sources.gsi).toBeDefined();
     // attribution は metadata に詰めている
     expect(s.metadata).toMatchObject({ attribution: expect.stringMatching(/地理院/) });
+  });
+
+  it("uses optimal_bvmap-v1 road center and road edge layers separately", () => {
+    const s = buildBaseStyle("standard");
+    const byId = new Map(s.layers.map((layer) => [layer.id, layer]));
+    expect(byId.get("road-line")).toMatchObject({ "source-layer": "RdCL" });
+    expect(byId.get("road-edge-line")).toMatchObject({ "source-layer": "RdEdg" });
+    expect(byId.get("road-component-line")).toMatchObject({ "source-layer": "RdCompt" });
+    expect(byId.get("building-outline-line")).toMatchObject({ "source-layer": "BldA" });
+    expect(byId.get("waterarea-outline-line")).toMatchObject({ "source-layer": "WA" });
+    expect(HIDEABLE_LAYER_IDS).toContain("road-edge-line");
+    expect(HIDEABLE_LAYER_IDS).toContain("road-component-line");
+    expect(HIDEABLE_LAYER_IDS).toContain("building-outline-line");
   });
 
   it("preset 'mono' has grayscale highlight colors (fill and stroke)", () => {

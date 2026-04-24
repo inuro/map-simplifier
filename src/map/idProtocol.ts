@@ -7,7 +7,7 @@ import Pbf from "pbf";
 import vtpbf from "vt-pbf";
 
 /**
- * 国土地理院 experimental_bvmap には feature.id が一切付与されていないため、
+ * 国土地理院ベクトルタイルには feature.id が一切付与されていないため、
  * そのままでは `setFeatureState` / 任意の per-feature 状態管理が行えない。
  *
  * ここでは `gsi-ids://...` という独自プロトコルを MapLibre に登録し、
