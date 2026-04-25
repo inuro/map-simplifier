@@ -21,13 +21,17 @@ import {
   type ProjectFn,
 } from "./map/featureDistance";
 import {
-  centerOfBounds,
   expandBoundsByFactor,
   geometryBounds,
-  pointInBounds,
   unionBounds,
   type LngLatBounds,
 } from "./map/featureBounds";
+import {
+  featureGeometryKey,
+  protectedFeatureKeysForInverseDelete,
+  sourceTileZoomCandidates,
+  type FeatureIdentityInput,
+} from "./map/featureIdentity";
 import { formatZoomDisplay, lockZoom, unlockZoom, type ZoomLockSnapshot } from "./map/zoomLock";
 import {
   LINE_WIDTH_CATEGORIES,
@@ -459,78 +463,56 @@ function deleteInverseOfSelected(): void {
   const items = selectionStore.state;
   if (items.length < 2) return;
 
-  // 選択 feature ごとの (sourceLayer, BBox) を保持しておく。
-  // タイル境界で同じ論理 feature が partial 別 geometry として返ってくるケースで、
-  // 「sourceLayer 一致 + 中心点が選択 BBox 内」のものを除外して保護する（#35）。
-  const selectedBoundsByLayer = new Map<string, LngLatBounds[]>();
   const itemBounds: LngLatBounds[] = [];
   for (const i of items) {
     const b = geometryBounds(i.geometry);
     if (!b) continue;
     itemBounds.push(b);
-    const list = selectedBoundsByLayer.get(i.sourceLayer);
-    if (list) list.push(b);
-    else selectedBoundsByLayer.set(i.sourceLayer, [b]);
   }
   const a = unionBounds(itemBounds);
   if (!a) return;
   const b = expandBoundsByFactor(a, INVERSE_DELETE_BOUNDS_LINEAR_FACTOR);
 
-  // lng-lat の B を screen 座標 AABB に project（緯度は y が反転するので min/max を取る）。
-  const p1 = map.project([b[0], b[1]]);
-  const p2 = map.project([b[2], b[3]]);
+  // lng-lat の B の 4 隅を screen 座標 AABB に project。
+  // bearing/pitch がある場合、対角 2 点だけでは過小評価するため 4 隅を使う（#33）。
+  const corners = [
+    map.project([b[0], b[1]]),
+    map.project([b[0], b[3]]),
+    map.project([b[2], b[1]]),
+    map.project([b[2], b[3]]),
+  ];
   const screenBbox: [[number, number], [number, number]] = [
-    [Math.min(p1.x, p2.x), Math.min(p1.y, p2.y)],
-    [Math.max(p1.x, p2.x), Math.max(p1.y, p2.y)],
+    [Math.min(...corners.map((p) => p.x)), Math.min(...corners.map((p) => p.y))],
+    [Math.max(...corners.map((p) => p.x)), Math.max(...corners.map((p) => p.y))],
   ];
   const raw = map.queryRenderedFeatures(screenBbox, {
     layers: [...HIDEABLE_LAYER_IDS],
   });
 
-  const selectedKeys = new Set(
-    items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.geometry)}`),
-  );
-  // partial 保護のキー：同 sourceLayer + properties 完全一致なら、たとえ geometry が
-  // 別タイルの partial として返ってきていても「同じ論理 feature」とみなして除外する。
-  // GSI ベクトルタイルでは partial 同士は properties (vt_code 等) が完全一致するため
-  // 実用上ほぼ確実に同一性判定できる。実機検証では 88 件選択に対し 1228 件の partial が
-  // この経路で誤って hidden に登録されていた（#35）。
-  const selectedPropsKeys = new Set(
-    items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.properties)}`),
-  );
   const seen = new Set<string>();
-  const targets: { sourceLayer: string; geometry: import("geojson").Geometry; properties: Record<string, unknown> }[] = [];
+  const candidates: FeatureIdentityInput[] = [];
   for (const f of raw) {
     const sourceLayer = f.sourceLayer ?? "";
-    const k = `${sourceLayer}::${JSON.stringify(f.geometry)}`;
-    if (selectedKeys.has(k)) continue;
+    const candidate: FeatureIdentityInput = {
+      sourceLayer,
+      geometry: f.geometry,
+      properties: f.properties ?? {},
+    };
+    const k = featureGeometryKey(candidate);
     if (seen.has(k)) continue;
     seen.add(k);
     if (!isSourceLayerVisible(sourceLayer, layerVisibilityStore.state)) continue;
     if (editState.isHidden({ sourceLayer, geometry: f.geometry })) continue;
-
-    // partial 保護 1: candidate の bbox 中心が同じ sourceLayer の選択 BBox に含まれるなら除外。
-    const cb = geometryBounds(f.geometry);
-    if (cb) {
-      const center = centerOfBounds(cb);
-      const protectList = selectedBoundsByLayer.get(sourceLayer);
-      if (protectList && protectList.some((pb) => pointInBounds(center, pb))) {
-        continue;
-      }
-    }
-
-    // partial 保護 2: 選択 feature と sourceLayer + properties が一致する candidate は
-    // 「同じ論理 feature の partial」とみなして除外。タイル境界で分割されて bbox 範囲外に
-    // 出ている partial も保護できる。
-    const propsKey = `${sourceLayer}::${JSON.stringify(f.properties ?? {})}`;
-    if (selectedPropsKeys.has(propsKey)) continue;
-
-    targets.push({
-      sourceLayer,
-      geometry: f.geometry,
-      properties: f.properties ?? {},
-    });
+    candidates.push(candidate);
   }
+
+  const protectedKeys = protectedFeatureKeysForInverseDelete({
+    selected: items,
+    candidates,
+    project: (lng, lat) => map.project([lng, lat]),
+    sourceZooms: sourceTileZoomCandidates(map.getZoom()),
+  });
+  const targets = candidates.filter((f) => !protectedKeys.has(featureGeometryKey(f)));
 
   if (targets.length === 0) return;
   const before = editState.snapshot();
