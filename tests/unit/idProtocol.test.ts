@@ -6,6 +6,8 @@ import Pbf from "pbf";
 import vtpbf from "vt-pbf";
 import {
   injectIdsIntoTilePbf,
+  tileCoordFromUrl,
+  tileFeatureId,
   toProtocolUrl,
   toRealUrl,
 } from "../../src/map/idProtocol";
@@ -29,6 +31,31 @@ describe("URL helpers", () => {
 
   it("leaves non gsi-ids URL alone", () => {
     expect(toRealUrl("https://example.com/x.pbf")).toBe("https://example.com/x.pbf");
+  });
+});
+
+describe("tile id helpers", () => {
+  it("parses z/x/y from a GSI tile URL", () => {
+    expect(
+      tileCoordFromUrl("https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/16/58500/24064.pbf"),
+    ).toEqual({ z: 16, x: 58500, y: 24064 });
+    expect(
+      tileCoordFromUrl(
+        "gsi-ids://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/15/29250/12032.pbf?foo=1",
+      ),
+    ).toEqual({ z: 15, x: 29250, y: 12032 });
+  });
+
+  it("packs z/x/y/featureIndex into a safe, non-zero integer id", () => {
+    const id = tileFeatureId({ z: 16, x: 58500, y: 24064 }, 117);
+    expect(id).toBe(4754856791244918);
+    expect(Number.isSafeInteger(id)).toBe(true);
+  });
+
+  it("uses different ids for the same feature index in adjacent tiles", () => {
+    const a = tileFeatureId({ z: 16, x: 58500, y: 24064 }, 0);
+    const b = tileFeatureId({ z: 16, x: 58501, y: 24064 }, 0);
+    expect(a).not.toBe(b);
   });
 });
 
@@ -86,9 +113,10 @@ describe("injectIdsIntoTilePbf", () => {
     expect(out.byteLength).toBe(0);
   });
 
-  it("round-trips a tile and assigns 1-origin feature ids per layer", () => {
+  it("round-trips a tile and assigns tile-scoped feature ids per layer", () => {
     const buf = buildShimTilePbf();
-    const out = injectIdsIntoTilePbf(buf);
+    const tileCoord = { z: 16, x: 58500, y: 24064 };
+    const out = injectIdsIntoTilePbf(buf, tileCoord);
     expect(out.byteLength).toBeGreaterThan(0);
 
     const tile = new VectorTile(new Pbf(out));
@@ -96,12 +124,12 @@ describe("injectIdsIntoTilePbf", () => {
 
     const road = tile.layers["road"]!;
     expect(road.length).toBe(2);
-    expect(road.feature(0).id).toBe(1);
-    expect(road.feature(1).id).toBe(2);
+    expect(road.feature(0).id).toBe(tileFeatureId(tileCoord, 0));
+    expect(road.feature(1).id).toBe(tileFeatureId(tileCoord, 1));
 
     const building = tile.layers["building"]!;
     expect(building.length).toBe(1);
-    expect(building.feature(0).id).toBe(1);
+    expect(building.feature(0).id).toBe(tileFeatureId(tileCoord, 0));
     expect(building.feature(0).properties["name"]).toBe("x");
   });
 

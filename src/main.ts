@@ -27,6 +27,13 @@ import {
   type LngLatBounds,
 } from "./map/featureBounds";
 import {
+  featureGeometryKey,
+  protectedFeatureKeysForInverseDelete,
+  sourceTileZoomCandidates,
+  type FeatureIdentityInput,
+} from "./map/featureIdentity";
+import { formatZoomDisplay, lockZoom, unlockZoom, type ZoomLockSnapshot } from "./map/zoomLock";
+import {
   LINE_WIDTH_CATEGORIES,
   LineWidthStore,
   LINE_WIDTH_MAX,
@@ -79,6 +86,7 @@ const layerVisibilityToggle = requireEl("layer-visibility-toggle", HTMLButtonEle
 const layerVisibilityPopover = requireEl("layer-visibility-popover", HTMLElement);
 const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
 const appVersionEl = requireEl("app-version", HTMLSpanElement);
+const zoomDisplayEl = requireEl("zoom-display", HTMLSpanElement);
 
 // Vite の define で package.json.version から注入される。
 appVersionEl.textContent = `v${__APP_VERSION__}`;
@@ -199,6 +207,7 @@ map.on("load", () => {
   applyLayerVisibility(map, layerVisibilityStore.state);
   applyLineWidthFactors(map, lineWidthStore.factors);
   hiddenSync.syncAll();
+  updateZoomDisplay();
   document.body.dataset["mapReady"] = "true";
 });
 
@@ -226,6 +235,33 @@ map.on("idle", () => {
   hiddenSync.syncAll();
 });
 
+// 編集中（hidden / highlighted のいずれかが非空）はズームを現行に固定する。#35
+// GSI タイルにはグローバル feature ID が無く、ズーム間で feature の geometry が
+// 別物に simplify されるため、ズーム変更は editState の追跡を破壊する。
+let zoomLockSnapshot: ZoomLockSnapshot | null = null;
+
+function isEditingActive(): boolean {
+  const s = editState.state;
+  return s.hidden.length > 0 || s.highlighted.length > 0;
+}
+
+function refreshZoomLock(): void {
+  const editing = isEditingActive();
+  if (editing && zoomLockSnapshot === null) {
+    zoomLockSnapshot = lockZoom(map);
+  } else if (!editing && zoomLockSnapshot !== null) {
+    unlockZoom(map, zoomLockSnapshot);
+    zoomLockSnapshot = null;
+  }
+  updateZoomDisplay();
+}
+
+function updateZoomDisplay(): void {
+  const locked = zoomLockSnapshot !== null;
+  zoomDisplayEl.textContent = formatZoomDisplay(map.getZoom(), locked);
+  zoomDisplayEl.dataset["locked"] = locked ? "true" : "false";
+}
+
 editState.subscribe((s) => {
   setHighlightOverlayData(
     map,
@@ -237,8 +273,11 @@ editState.subscribe((s) => {
   );
   hiddenSync.syncAll();
   resetEditsBtn.disabled = s.hidden.length === 0 && s.highlighted.length === 0;
+  refreshZoomLock();
 });
 resetEditsBtn.disabled = true;
+map.on("zoom", updateZoomDisplay);
+map.on("zoomend", updateZoomDisplay);
 
 function updateSelectionUI(): void {
   const n = selectionStore.state.length;
@@ -427,42 +466,53 @@ function deleteInverseOfSelected(): void {
   const itemBounds: LngLatBounds[] = [];
   for (const i of items) {
     const b = geometryBounds(i.geometry);
-    if (b) itemBounds.push(b);
+    if (!b) continue;
+    itemBounds.push(b);
   }
   const a = unionBounds(itemBounds);
   if (!a) return;
   const b = expandBoundsByFactor(a, INVERSE_DELETE_BOUNDS_LINEAR_FACTOR);
 
-  // lng-lat の B を screen 座標 AABB に project（緯度は y が反転するので min/max を取る）。
-  const p1 = map.project([b[0], b[1]]);
-  const p2 = map.project([b[2], b[3]]);
+  // lng-lat の B の 4 隅を screen 座標 AABB に project。
+  // bearing/pitch がある場合、対角 2 点だけでは過小評価するため 4 隅を使う（#33）。
+  const corners = [
+    map.project([b[0], b[1]]),
+    map.project([b[0], b[3]]),
+    map.project([b[2], b[1]]),
+    map.project([b[2], b[3]]),
+  ];
   const screenBbox: [[number, number], [number, number]] = [
-    [Math.min(p1.x, p2.x), Math.min(p1.y, p2.y)],
-    [Math.max(p1.x, p2.x), Math.max(p1.y, p2.y)],
+    [Math.min(...corners.map((p) => p.x)), Math.min(...corners.map((p) => p.y))],
+    [Math.max(...corners.map((p) => p.x)), Math.max(...corners.map((p) => p.y))],
   ];
   const raw = map.queryRenderedFeatures(screenBbox, {
     layers: [...HIDEABLE_LAYER_IDS],
   });
 
-  const selectedKeys = new Set(
-    items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.geometry)}`),
-  );
   const seen = new Set<string>();
-  const targets: { sourceLayer: string; geometry: import("geojson").Geometry; properties: Record<string, unknown> }[] = [];
+  const candidates: FeatureIdentityInput[] = [];
   for (const f of raw) {
     const sourceLayer = f.sourceLayer ?? "";
-    const k = `${sourceLayer}::${JSON.stringify(f.geometry)}`;
-    if (selectedKeys.has(k)) continue;
+    const candidate: FeatureIdentityInput = {
+      sourceLayer,
+      geometry: f.geometry,
+      properties: f.properties ?? {},
+    };
+    const k = featureGeometryKey(candidate);
     if (seen.has(k)) continue;
     seen.add(k);
     if (!isSourceLayerVisible(sourceLayer, layerVisibilityStore.state)) continue;
     if (editState.isHidden({ sourceLayer, geometry: f.geometry })) continue;
-    targets.push({
-      sourceLayer,
-      geometry: f.geometry,
-      properties: f.properties ?? {},
-    });
+    candidates.push(candidate);
   }
+
+  const protectedKeys = protectedFeatureKeysForInverseDelete({
+    selected: items,
+    candidates,
+    project: (lng, lat) => map.project([lng, lat]),
+    sourceZooms: sourceTileZoomCandidates(map.getZoom()),
+  });
+  const targets = candidates.filter((f) => !protectedKeys.has(featureGeometryKey(f)));
 
   if (targets.length === 0) return;
   const before = editState.snapshot();

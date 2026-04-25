@@ -7,8 +7,9 @@ import { HIDEABLE_LAYER_IDS } from "./style";
  * 非表示にしたい feature（`editState.hidden`）と MapLibre の feature-state を同期する。
  *
  * GSI ベクトルタイルは元から feature.id を持たず、本アプリでは `addProtocol('gsi-ids')`
- * がタイル内で連番 id を注入する。しかし同じ「論理 feature」でも **タイルを跨ぐと別の id**
- * になるため、`setFeatureState({id})` を単発で呼ぶだけでは広域にパンされた時に反映されない。
+ * がタイル座標 + タイル内連番由来の id を注入する。id は sourceLayer 内でタイルを
+ * 跨いでも衝突しないが、同じ「論理 feature」でもタイルを跨ぐと別 id になるため、
+ * `setFeatureState({id})` を単発で呼ぶだけでは広域にパンされた時に反映されない。
  *
  * そこで editState 側は sourceLayer + geometry で識別を保持し、以下のタイミングで
  * 「現在 rendered な feature を走査 → geometry がマッチした feature に feature-state を付ける」

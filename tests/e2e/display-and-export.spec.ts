@@ -920,6 +920,312 @@ test("select multiple → 「選択以外を削除」 hides surrounding features
   expect(hiddenAfterUndo).toBe(hiddenBefore);
 });
 
+test("「選択以外を削除」後に selection を解除して pan しても feature-state が飛び火しない", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  await page.evaluate(async () => {
+    const g = window as unknown as {
+      __mlMap?: {
+        setBearing(v: number): void;
+        setPitch(v: number): void;
+        setCenter(v: [number, number]): void;
+        setZoom(v: number): void;
+        once(type: "idle", listener: () => void): void;
+      };
+    };
+    const map = g.__mlMap!;
+    map.setBearing(0);
+    map.setPitch(0);
+    map.setCenter([141.35299, 43.06619]);
+    map.setZoom(17);
+    await new Promise<void>((resolve) => map.once("idle", resolve));
+  });
+
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 17 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  const selected = await page.evaluate(() => {
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+    const cx = canvas.clientWidth / 2;
+    const cy = canvas.clientHeight / 2;
+    const size = 240;
+    const p1 = { x: cx - size / 2, y: cy - size / 2 };
+    const p2 = { x: cx + size / 2, y: cy + size / 2 };
+    function mk(type: string, x: number, y: number): MouseEvent {
+      return new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: rect.left + x,
+        clientY: rect.top + y,
+        button: 0,
+        shiftKey: true,
+      });
+    }
+    canvas.dispatchEvent(mk("mousedown", p1.x, p1.y));
+    canvas.dispatchEvent(mk("mousemove", (p1.x + p2.x) / 2, (p1.y + p2.y) / 2));
+    canvas.dispatchEvent(mk("mousemove", p2.x, p2.y));
+    canvas.dispatchEvent(mk("mouseup", p2.x, p2.y));
+    const g = window as unknown as { __selectionStore?: { state: unknown[] } };
+    return g.__selectionStore?.state.length ?? 0;
+  });
+  expect(selected).toBeGreaterThan(1);
+
+  await page.locator("#delete-inverse").click();
+
+  async function measureLeaks(): Promise<{
+    hiddenTotal: number;
+    idCollisionGroups: number;
+    notHiddenButStateTrue: number;
+    selectedButStateTrue: number;
+  }> {
+    return await page.evaluate(() => {
+      const g = window as unknown as {
+        __mlMap?: {
+          queryRenderedFeatures(
+            geometry?: unknown,
+            options?: { layers: string[] },
+          ): Array<{
+            id?: string | number;
+            sourceLayer?: string;
+            geometry: unknown;
+          }>;
+          getFeatureState(target: {
+            source: string;
+            sourceLayer: string;
+            id: string | number;
+          }): Record<string, unknown>;
+        };
+        __editState?: { state: { hidden: Array<{ sourceLayer: string; geometry: unknown }> } };
+        __selectionStore?: { state: Array<{ sourceLayer: string; geometry: unknown }> };
+      };
+      const map = g.__mlMap!;
+      const layers = [
+        "waterarea-fill",
+        "waterarea-outline-line",
+        "waterline-line",
+        "river-line",
+        "railway-line",
+        "rail-track-line",
+        "road-line",
+        "road-edge-line",
+        "road-component-line",
+        "building-fill",
+        "building-outline-line",
+        "structure-fill",
+        "structure-outline-line",
+        "boundary-line",
+        "adminarea-boundary-line",
+      ];
+      const keyOf = (sourceLayer: string, geometry: unknown) =>
+        `${sourceLayer}::${JSON.stringify(geometry)}`;
+      const hiddenKeys = new Set(
+        (g.__editState?.state.hidden ?? []).map((h) => keyOf(h.sourceLayer, h.geometry)),
+      );
+      const selectedKeys = new Set(
+        (g.__selectionStore?.state ?? []).map((s) => keyOf(s.sourceLayer, s.geometry)),
+      );
+
+      const raw = map.queryRenderedFeatures(undefined, { layers });
+      const byKey = new Map<string, (typeof raw)[number]>();
+      for (const f of raw) {
+        const sourceLayer = f.sourceLayer ?? "";
+        const key = keyOf(sourceLayer, f.geometry);
+        if (!byKey.has(key)) byKey.set(key, f);
+      }
+
+      const idGroups = new Map<string, string[]>();
+      let notHiddenButStateTrue = 0;
+      let selectedButStateTrue = 0;
+      for (const f of byKey.values()) {
+        const sourceLayer = f.sourceLayer ?? "";
+        const key = keyOf(sourceLayer, f.geometry);
+        const id = f.id;
+        if (id === undefined || id === null) continue;
+        const idKey = `${sourceLayer}::${String(id)}`;
+        const list = idGroups.get(idKey) ?? [];
+        list.push(key);
+        idGroups.set(idKey, list);
+
+        const state = map.getFeatureState({ source: "gsi", sourceLayer, id });
+        const stateHidden = state["hidden"] === true;
+        if (!hiddenKeys.has(key) && stateHidden) notHiddenButStateTrue += 1;
+        if (selectedKeys.has(key) && stateHidden) selectedButStateTrue += 1;
+      }
+
+      let idCollisionGroups = 0;
+      for (const list of idGroups.values()) {
+        if (list.length > 1) idCollisionGroups += 1;
+      }
+      return {
+        hiddenTotal: g.__editState?.state.hidden.length ?? 0,
+        idCollisionGroups,
+        notHiddenButStateTrue,
+        selectedButStateTrue,
+      };
+    });
+  }
+
+  await expect.poll(() => measureLeaks()).toMatchObject({
+    idCollisionGroups: 0,
+    notHiddenButStateTrue: 0,
+    selectedButStateTrue: 0,
+  });
+  expect((await measureLeaks()).hiddenTotal).toBeGreaterThan(0);
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: rect.left + 800,
+      clientY: rect.top + 30,
+      button: 0,
+    };
+    canvas.dispatchEvent(new MouseEvent("mousedown", opts));
+    canvas.dispatchEvent(new MouseEvent("mouseup", opts));
+    canvas.dispatchEvent(new MouseEvent("click", opts));
+  });
+
+  await expect.poll(() => measureLeaks()).toMatchObject({
+    idCollisionGroups: 0,
+    notHiddenButStateTrue: 0,
+    selectedButStateTrue: 0,
+  });
+
+  for (const deltaX of [260, -260]) {
+    await page.evaluate(async (dx) => {
+      const g = window as unknown as {
+        __mlMap?: {
+          panBy(offset: [number, number], options: { duration: number }): void;
+          once(type: "idle", listener: () => void): void;
+        };
+      };
+      const map = g.__mlMap!;
+      map.panBy([dx, 0], { duration: 0 });
+      await new Promise<void>((resolve) => map.once("idle", resolve));
+    }, deltaX);
+
+    await expect.poll(() => measureLeaks()).toMatchObject({
+      idCollisionGroups: 0,
+      notHiddenButStateTrue: 0,
+      selectedButStateTrue: 0,
+    });
+  }
+});
+
+test("編集中はズームロック、リセットでロック解除、表示はリアルタイム更新", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { setZoom(z: number): void } };
+    g.__mlMap?.setZoom(15);
+  });
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 15 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  // ロック前：min/max は MapLibre のデフォルト範囲のはず
+  const beforeLock = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number; getZoom(): number };
+    };
+    return {
+      min: g.__mlMap!.getMinZoom(),
+      max: g.__mlMap!.getMaxZoom(),
+      zoom: g.__mlMap!.getZoom(),
+    };
+  });
+  expect(beforeLock.min).toBeLessThan(beforeLock.zoom);
+  expect(beforeLock.max).toBeGreaterThan(beforeLock.zoom);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "false");
+
+  // 中央クリックで feature 選択 → 削除でロック発動
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+    const cx = canvas.clientWidth / 2;
+    const cy = canvas.clientHeight / 2;
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: rect.left + cx,
+      clientY: rect.top + cy,
+      button: 0,
+    };
+    canvas.dispatchEvent(new MouseEvent("mousedown", opts));
+    canvas.dispatchEvent(new MouseEvent("mouseup", opts));
+    canvas.dispatchEvent(new MouseEvent("click", opts));
+  });
+  await page.waitForFunction(() => {
+    const g = window as unknown as { __selectionStore?: { state: unknown[] } };
+    return (g.__selectionStore?.state.length ?? 0) > 0;
+  });
+  await page.locator("#delete").click();
+
+  // ロック発動：min == max == 直前のズーム
+  const afterLock = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number; getZoom(): number };
+    };
+    return {
+      min: g.__mlMap!.getMinZoom(),
+      max: g.__mlMap!.getMaxZoom(),
+      zoom: g.__mlMap!.getZoom(),
+    };
+  });
+  expect(afterLock.min).toBeCloseTo(afterLock.zoom, 5);
+  expect(afterLock.max).toBeCloseTo(afterLock.zoom, 5);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "true");
+  await expect(page.locator("#zoom-display")).toContainText("🔒");
+
+  // 編集をリセット → ロック解除
+  await page.locator("#reset-edits").click();
+  const afterReset = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number };
+    };
+    return { min: g.__mlMap!.getMinZoom(), max: g.__mlMap!.getMaxZoom() };
+  });
+  expect(afterReset.min).toBeCloseTo(beforeLock.min, 5);
+  expect(afterReset.max).toBeCloseTo(beforeLock.max, 5);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "false");
+});
+
 test("layer popover combines visibility and per-layer line width controls", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
