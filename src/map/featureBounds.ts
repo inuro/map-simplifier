@@ -96,3 +96,13 @@ export function expandBoundsByFactor(b: LngLatBounds, factor: number): LngLatBou
   const halfH = ((maxLat - minLat) * factor) / 2;
   return [cx - halfW, cy - halfH, cx + halfW, cy + halfH] as const;
 }
+
+/** BBox の中心点 [lng, lat]。 */
+export function centerOfBounds(b: LngLatBounds): readonly [number, number] {
+  return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] as const;
+}
+
+/** 点が BBox 内（境界含む）にあるか。 */
+export function pointInBounds(p: readonly [number, number], b: LngLatBounds): boolean {
+  return p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+}

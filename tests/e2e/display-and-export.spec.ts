@@ -920,6 +920,99 @@ test("select multiple → 「選択以外を削除」 hides surrounding features
   expect(hiddenAfterUndo).toBe(hiddenBefore);
 });
 
+test("編集中はズームロック、リセットでロック解除、表示はリアルタイム更新", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => {
+    const g = window as unknown as { __mlMap?: { setZoom(z: number): void } };
+    g.__mlMap?.setZoom(15);
+  });
+  await page.waitForFunction(
+    () => {
+      const g = window as unknown as {
+        __mlMap?: { getZoom(): number; isStyleLoaded(): boolean; areTilesLoaded(): boolean };
+      };
+      return (
+        !!g.__mlMap &&
+        Math.round(g.__mlMap.getZoom()) === 15 &&
+        g.__mlMap.isStyleLoaded() &&
+        g.__mlMap.areTilesLoaded()
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+
+  // ロック前：min/max は MapLibre のデフォルト範囲のはず
+  const beforeLock = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number; getZoom(): number };
+    };
+    return {
+      min: g.__mlMap!.getMinZoom(),
+      max: g.__mlMap!.getMaxZoom(),
+      zoom: g.__mlMap!.getZoom(),
+    };
+  });
+  expect(beforeLock.min).toBeLessThan(beforeLock.zoom);
+  expect(beforeLock.max).toBeGreaterThan(beforeLock.zoom);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "false");
+
+  // 中央クリックで feature 選択 → 削除でロック発動
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".maplibregl-canvas") as HTMLElement;
+    const rect = canvas.getBoundingClientRect();
+    const cx = canvas.clientWidth / 2;
+    const cy = canvas.clientHeight / 2;
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: rect.left + cx,
+      clientY: rect.top + cy,
+      button: 0,
+    };
+    canvas.dispatchEvent(new MouseEvent("mousedown", opts));
+    canvas.dispatchEvent(new MouseEvent("mouseup", opts));
+    canvas.dispatchEvent(new MouseEvent("click", opts));
+  });
+  await page.waitForFunction(() => {
+    const g = window as unknown as { __selectionStore?: { state: unknown[] } };
+    return (g.__selectionStore?.state.length ?? 0) > 0;
+  });
+  await page.locator("#delete").click();
+
+  // ロック発動：min == max == 直前のズーム
+  const afterLock = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number; getZoom(): number };
+    };
+    return {
+      min: g.__mlMap!.getMinZoom(),
+      max: g.__mlMap!.getMaxZoom(),
+      zoom: g.__mlMap!.getZoom(),
+    };
+  });
+  expect(afterLock.min).toBeCloseTo(afterLock.zoom, 5);
+  expect(afterLock.max).toBeCloseTo(afterLock.zoom, 5);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "true");
+  await expect(page.locator("#zoom-display")).toContainText("🔒");
+
+  // 編集をリセット → ロック解除
+  await page.locator("#reset-edits").click();
+  const afterReset = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getMinZoom(): number; getMaxZoom(): number };
+    };
+    return { min: g.__mlMap!.getMinZoom(), max: g.__mlMap!.getMaxZoom() };
+  });
+  expect(afterReset.min).toBeCloseTo(beforeLock.min, 5);
+  expect(afterReset.max).toBeCloseTo(beforeLock.max, 5);
+  await expect(page.locator("#zoom-display")).toHaveAttribute("data-locked", "false");
+});
+
 test("layer popover combines visibility and per-layer line width controls", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {

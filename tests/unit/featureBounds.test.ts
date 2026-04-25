@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Geometry } from "geojson";
 import {
+  centerOfBounds,
   expandBoundsByFactor,
   geometryBounds,
+  pointInBounds,
   unionBounds,
   type LngLatBounds,
 } from "../../src/map/featureBounds";
@@ -93,5 +95,22 @@ describe("expandBoundsByFactor", () => {
   it("退化 BBox（点）は factor によらず点のまま", () => {
     const b: LngLatBounds = [5, 5, 5, 5];
     expect(expandBoundsByFactor(b, 4)).toEqual([5, 5, 5, 5]);
+  });
+});
+
+describe("centerOfBounds / pointInBounds", () => {
+  it("centerOfBounds は両軸の中点", () => {
+    expect(centerOfBounds([0, 0, 10, 20])).toEqual([5, 10]);
+    expect(centerOfBounds([-4, 6, 6, 10])).toEqual([1, 8]);
+  });
+
+  it("pointInBounds は境界含む内側で true、外側で false", () => {
+    const b: LngLatBounds = [0, 0, 10, 10];
+    expect(pointInBounds([5, 5], b)).toBe(true);
+    expect(pointInBounds([0, 0], b)).toBe(true); // 境界
+    expect(pointInBounds([10, 10], b)).toBe(true); // 境界
+    expect(pointInBounds([-0.001, 5], b)).toBe(false);
+    expect(pointInBounds([5, 10.001], b)).toBe(false);
+    expect(pointInBounds([15, 5], b)).toBe(false);
   });
 });

@@ -23,11 +23,12 @@
       header {
         display: flex;
         align-items: center;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         gap: 12px;
         padding: 8px 12px;
         border-bottom: 1px solid #e0e0e0;
         background: #fff;
+        overflow-x: auto;
       }
       header h1 {
         margin: 0;
@@ -94,6 +95,16 @@
         color: #666;
         min-width: 6em;
         text-align: right;
+      }
+      .zoom-display {
+        font-size: 12px;
+        color: #666;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .zoom-display[data-locked="true"] {
+        color: #b42318;
+        font-weight: 600;
       }
       button.primary {
         appearance: none;
@@ -243,6 +254,7 @@
         </form>
         <span id="selection-count" class="selection-count" aria-live="polite"></span>
         <span class="spacer"></span>
+        <span id="zoom-display" class="zoom-display" aria-live="polite" title="現在のズームレベル。編集中はロックされ、🔒 が表示される。">Z --</span>
         <div class="preset-group" role="group" aria-label="スタイルプリセット">
           <button id="preset-standard" type="button" aria-pressed="true">標準</button>
           <button id="preset-mono" type="button" aria-pressed="false">モノトーン</button>

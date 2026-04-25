@@ -21,11 +21,14 @@ import {
   type ProjectFn,
 } from "./map/featureDistance";
 import {
+  centerOfBounds,
   expandBoundsByFactor,
   geometryBounds,
+  pointInBounds,
   unionBounds,
   type LngLatBounds,
 } from "./map/featureBounds";
+import { formatZoomDisplay, lockZoom, unlockZoom, type ZoomLockSnapshot } from "./map/zoomLock";
 import {
   LINE_WIDTH_CATEGORIES,
   LineWidthStore,
@@ -79,6 +82,7 @@ const layerVisibilityToggle = requireEl("layer-visibility-toggle", HTMLButtonEle
 const layerVisibilityPopover = requireEl("layer-visibility-popover", HTMLElement);
 const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
 const appVersionEl = requireEl("app-version", HTMLSpanElement);
+const zoomDisplayEl = requireEl("zoom-display", HTMLSpanElement);
 
 // Vite の define で package.json.version から注入される。
 appVersionEl.textContent = `v${__APP_VERSION__}`;
@@ -199,6 +203,7 @@ map.on("load", () => {
   applyLayerVisibility(map, layerVisibilityStore.state);
   applyLineWidthFactors(map, lineWidthStore.factors);
   hiddenSync.syncAll();
+  updateZoomDisplay();
   document.body.dataset["mapReady"] = "true";
 });
 
@@ -226,6 +231,33 @@ map.on("idle", () => {
   hiddenSync.syncAll();
 });
 
+// 編集中（hidden / highlighted のいずれかが非空）はズームを現行に固定する。#35
+// GSI タイルにはグローバル feature ID が無く、ズーム間で feature の geometry が
+// 別物に simplify されるため、ズーム変更は editState の追跡を破壊する。
+let zoomLockSnapshot: ZoomLockSnapshot | null = null;
+
+function isEditingActive(): boolean {
+  const s = editState.state;
+  return s.hidden.length > 0 || s.highlighted.length > 0;
+}
+
+function refreshZoomLock(): void {
+  const editing = isEditingActive();
+  if (editing && zoomLockSnapshot === null) {
+    zoomLockSnapshot = lockZoom(map);
+  } else if (!editing && zoomLockSnapshot !== null) {
+    unlockZoom(map, zoomLockSnapshot);
+    zoomLockSnapshot = null;
+  }
+  updateZoomDisplay();
+}
+
+function updateZoomDisplay(): void {
+  const locked = zoomLockSnapshot !== null;
+  zoomDisplayEl.textContent = formatZoomDisplay(map.getZoom(), locked);
+  zoomDisplayEl.dataset["locked"] = locked ? "true" : "false";
+}
+
 editState.subscribe((s) => {
   setHighlightOverlayData(
     map,
@@ -237,8 +269,11 @@ editState.subscribe((s) => {
   );
   hiddenSync.syncAll();
   resetEditsBtn.disabled = s.hidden.length === 0 && s.highlighted.length === 0;
+  refreshZoomLock();
 });
 resetEditsBtn.disabled = true;
+map.on("zoom", updateZoomDisplay);
+map.on("zoomend", updateZoomDisplay);
 
 function updateSelectionUI(): void {
   const n = selectionStore.state.length;
@@ -424,10 +459,18 @@ function deleteInverseOfSelected(): void {
   const items = selectionStore.state;
   if (items.length < 2) return;
 
+  // 選択 feature ごとの (sourceLayer, BBox) を保持しておく。
+  // タイル境界で同じ論理 feature が partial 別 geometry として返ってくるケースで、
+  // 「sourceLayer 一致 + 中心点が選択 BBox 内」のものを除外して保護する（#35）。
+  const selectedBoundsByLayer = new Map<string, LngLatBounds[]>();
   const itemBounds: LngLatBounds[] = [];
   for (const i of items) {
     const b = geometryBounds(i.geometry);
-    if (b) itemBounds.push(b);
+    if (!b) continue;
+    itemBounds.push(b);
+    const list = selectedBoundsByLayer.get(i.sourceLayer);
+    if (list) list.push(b);
+    else selectedBoundsByLayer.set(i.sourceLayer, [b]);
   }
   const a = unionBounds(itemBounds);
   if (!a) return;
@@ -457,6 +500,18 @@ function deleteInverseOfSelected(): void {
     seen.add(k);
     if (!isSourceLayerVisible(sourceLayer, layerVisibilityStore.state)) continue;
     if (editState.isHidden({ sourceLayer, geometry: f.geometry })) continue;
+
+    // partial 保護：candidate の bbox 中心が同じ sourceLayer の選択 BBox に含まれるなら
+    // 選択 feature の partial 部分とみなして除外。
+    const cb = geometryBounds(f.geometry);
+    if (cb) {
+      const center = centerOfBounds(cb);
+      const protectList = selectedBoundsByLayer.get(sourceLayer);
+      if (protectList && protectList.some((pb) => pointInBounds(center, pb))) {
+        continue;
+      }
+    }
+
     targets.push({
       sourceLayer,
       geometry: f.geometry,
