@@ -21,6 +21,12 @@ import {
   type ProjectFn,
 } from "./map/featureDistance";
 import {
+  expandBoundsByFactor,
+  geometryBounds,
+  unionBounds,
+  type LngLatBounds,
+} from "./map/featureBounds";
+import {
   LINE_WIDTH_CATEGORIES,
   LineWidthStore,
   LINE_WIDTH_MAX,
@@ -66,6 +72,7 @@ const undoBtn = requireEl("undo", HTMLButtonElement);
 const redoBtn = requireEl("redo", HTMLButtonElement);
 const highlightBtn = requireEl("highlight", HTMLButtonElement);
 const deleteBtn = requireEl("delete", HTMLButtonElement);
+const deleteInverseBtn = requireEl("delete-inverse", HTMLButtonElement);
 const resetEditsBtn = requireEl("reset-edits", HTMLButtonElement);
 const selectionCountEl = requireEl("selection-count", HTMLSpanElement);
 const layerVisibilityToggle = requireEl("layer-visibility-toggle", HTMLButtonElement);
@@ -245,6 +252,7 @@ function updateSelectionUI(): void {
     ),
   );
   deleteBtn.disabled = n === 0;
+  deleteInverseBtn.disabled = n < 2;
   highlightBtn.disabled = n === 0;
 }
 selectionStore.subscribe(() => updateSelectionUI());
@@ -407,6 +415,62 @@ function deleteSelected(): void {
   history.push(before);
 }
 
+// 選択 feature を包む lng-lat BBox A の中心を保ったまま辺を 2 倍（面積 4 倍）にした
+// BBox B を作り、B 内の hideable feature のうち選択以外を一括 hidden にする。#33
+// 4 倍は経験的に「残したい対象の周辺」を示す妥当な広さ。実運用で要調整。
+const INVERSE_DELETE_BOUNDS_LINEAR_FACTOR = 2;
+
+function deleteInverseOfSelected(): void {
+  const items = selectionStore.state;
+  if (items.length < 2) return;
+
+  const itemBounds: LngLatBounds[] = [];
+  for (const i of items) {
+    const b = geometryBounds(i.geometry);
+    if (b) itemBounds.push(b);
+  }
+  const a = unionBounds(itemBounds);
+  if (!a) return;
+  const b = expandBoundsByFactor(a, INVERSE_DELETE_BOUNDS_LINEAR_FACTOR);
+
+  // lng-lat の B を screen 座標 AABB に project（緯度は y が反転するので min/max を取る）。
+  const p1 = map.project([b[0], b[1]]);
+  const p2 = map.project([b[2], b[3]]);
+  const screenBbox: [[number, number], [number, number]] = [
+    [Math.min(p1.x, p2.x), Math.min(p1.y, p2.y)],
+    [Math.max(p1.x, p2.x), Math.max(p1.y, p2.y)],
+  ];
+  const raw = map.queryRenderedFeatures(screenBbox, {
+    layers: [...HIDEABLE_LAYER_IDS],
+  });
+
+  const selectedKeys = new Set(
+    items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.geometry)}`),
+  );
+  const seen = new Set<string>();
+  const targets: { sourceLayer: string; geometry: import("geojson").Geometry; properties: Record<string, unknown> }[] = [];
+  for (const f of raw) {
+    const sourceLayer = f.sourceLayer ?? "";
+    const k = `${sourceLayer}::${JSON.stringify(f.geometry)}`;
+    if (selectedKeys.has(k)) continue;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (!isSourceLayerVisible(sourceLayer, layerVisibilityStore.state)) continue;
+    if (editState.isHidden({ sourceLayer, geometry: f.geometry })) continue;
+    targets.push({
+      sourceLayer,
+      geometry: f.geometry,
+      properties: f.properties ?? {},
+    });
+  }
+
+  if (targets.length === 0) return;
+  const before = editState.snapshot();
+  editState.hideMany(targets);
+  // 選択は維持。「選択した対象を残し、それ以外を消す」機能なので選択クリアは不要。
+  history.push(before);
+}
+
 // 選択中の全 feature に強調を適用。すでに全員強調されている場合は解除。
 // 混在時（一部強調・一部未強調）は「未強調のものを全て強調」で揃える。
 function toggleHighlightSelected(): void {
@@ -442,6 +506,7 @@ function redo(): void {
 }
 
 deleteBtn.addEventListener("click", deleteSelected);
+deleteInverseBtn.addEventListener("click", deleteInverseOfSelected);
 highlightBtn.addEventListener("click", toggleHighlightSelected);
 resetEditsBtn.addEventListener("click", resetAllEdits);
 undoBtn.addEventListener("click", undo);
