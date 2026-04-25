@@ -490,6 +490,14 @@ function deleteInverseOfSelected(): void {
   const selectedKeys = new Set(
     items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.geometry)}`),
   );
+  // partial 保護のキー：同 sourceLayer + properties 完全一致なら、たとえ geometry が
+  // 別タイルの partial として返ってきていても「同じ論理 feature」とみなして除外する。
+  // GSI ベクトルタイルでは partial 同士は properties (vt_code 等) が完全一致するため
+  // 実用上ほぼ確実に同一性判定できる。実機検証では 88 件選択に対し 1228 件の partial が
+  // この経路で誤って hidden に登録されていた（#35）。
+  const selectedPropsKeys = new Set(
+    items.map((i) => `${i.sourceLayer}::${JSON.stringify(i.properties)}`),
+  );
   const seen = new Set<string>();
   const targets: { sourceLayer: string; geometry: import("geojson").Geometry; properties: Record<string, unknown> }[] = [];
   for (const f of raw) {
@@ -501,8 +509,7 @@ function deleteInverseOfSelected(): void {
     if (!isSourceLayerVisible(sourceLayer, layerVisibilityStore.state)) continue;
     if (editState.isHidden({ sourceLayer, geometry: f.geometry })) continue;
 
-    // partial 保護：candidate の bbox 中心が同じ sourceLayer の選択 BBox に含まれるなら
-    // 選択 feature の partial 部分とみなして除外。
+    // partial 保護 1: candidate の bbox 中心が同じ sourceLayer の選択 BBox に含まれるなら除外。
     const cb = geometryBounds(f.geometry);
     if (cb) {
       const center = centerOfBounds(cb);
@@ -511,6 +518,12 @@ function deleteInverseOfSelected(): void {
         continue;
       }
     }
+
+    // partial 保護 2: 選択 feature と sourceLayer + properties が一致する candidate は
+    // 「同じ論理 feature の partial」とみなして除外。タイル境界で分割されて bbox 範囲外に
+    // 出ている partial も保護できる。
+    const propsKey = `${sourceLayer}::${JSON.stringify(f.properties ?? {})}`;
+    if (selectedPropsKeys.has(propsKey)) continue;
 
     targets.push({
       sourceLayer,
