@@ -153,6 +153,214 @@ test("coordinate input rejects invalid coordinates without moving", async ({ pag
   expect(after.lng).toBeCloseTo(before.lng, 8);
 });
 
+test("Save/Load stores and restores current map state in browser storage", async ({ page }) => {
+  await page.route(
+    "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/**",
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ results: { muniCd: "01101", lv01Nm: "大通西一丁目" } }),
+      });
+    },
+  );
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+
+  await page.evaluate(async () => {
+    const g = window as unknown as {
+      __mlMap?: {
+        jumpTo(options: { center: [number, number]; zoom: number }): void;
+        once(type: "idle", listener: () => void): void;
+        queryRenderedFeatures(
+          geometry?: unknown,
+          options?: { layers: string[] },
+        ): Array<{
+          sourceLayer?: string;
+          geometry: GeoJSON.Geometry;
+          properties?: Record<string, unknown>;
+        }>;
+      };
+      __editState?: {
+        hideMany(items: unknown[]): void;
+        highlightMany(items: unknown[]): void;
+      };
+    };
+    const map = g.__mlMap!;
+    map.jumpTo({ center: [141.35299, 43.06619], zoom: 16.35 });
+    await new Promise<void>((resolve) => map.once("idle", resolve));
+    const features = map.queryRenderedFeatures(undefined, {
+      layers: ["building-fill", "road-line"],
+    });
+    const building = features.find((f) => f.sourceLayer === "BldA") ?? features[0];
+    const road = features.find((f) => f.sourceLayer === "RdCL") ?? features[1] ?? features[0];
+    if (!building || !road) throw new Error("test features not found");
+    g.__editState!.hideMany([
+      {
+        sourceLayer: building.sourceLayer ?? "",
+        geometry: building.geometry,
+        properties: building.properties ?? {},
+      },
+    ]);
+    g.__editState!.highlightMany([
+      {
+        sourceLayer: road.sourceLayer ?? "",
+        geometry: road.geometry,
+        properties: road.properties ?? {},
+      },
+    ]);
+  });
+
+  await page.locator("#preset-mono").click();
+  await page.locator("#layer-visibility-toggle").click();
+  await page.locator('input[data-layer-visibility="building"]').uncheck();
+  await page.locator('button[data-lw="road"][data-op="inc"]').click();
+  await page.locator("#layer-visibility-toggle").click();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.defaultValue()).toContain("大通西一丁目");
+    await dialog.accept("保存テスト");
+  });
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-status")).toContainText("保存しました");
+
+  const savedValue = await page.locator("#load-project-select").evaluate((el) => {
+    const select = el as HTMLSelectElement;
+    return select.options[1]?.value ?? "";
+  });
+  expect(savedValue).not.toBe("");
+
+  await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { jumpTo(options: { center: [number, number]; zoom: number }): void };
+      __editState?: { clearAll(): void };
+      __layerVisibilityStore?: { reset(): void };
+      __lineWidthStore?: { reset(): void };
+    };
+    g.__mlMap!.jumpTo({ center: [139.767, 35.681], zoom: 13 });
+    g.__editState!.clearAll();
+    g.__layerVisibilityStore!.reset();
+    g.__lineWidthStore!.reset();
+  });
+  await page.locator("#preset-standard").click();
+
+  await page.locator("#load-project-select").selectOption(savedValue);
+  await page.locator("#load-project").click();
+  await expect(page.locator("#project-status")).toContainText("読み込みました");
+
+  const restored = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: {
+        getCenter(): { lat: number; lng: number };
+        getZoom(): number;
+        getStyle(): { name?: string };
+      };
+      __editState?: { state: { hidden: unknown[]; highlighted: unknown[] } };
+      __layerVisibilityStore?: { state: Record<string, boolean> };
+      __lineWidthStore?: { factors: Record<string, number> };
+    };
+    const c = g.__mlMap!.getCenter();
+    return {
+      lat: c.lat,
+      lng: c.lng,
+      zoom: g.__mlMap!.getZoom(),
+      styleName: g.__mlMap!.getStyle().name,
+      hidden: g.__editState!.state.hidden.length,
+      highlighted: g.__editState!.state.highlighted.length,
+      buildingVisible: g.__layerVisibilityStore!.state.building,
+      roadWidth: g.__lineWidthStore!.factors.road,
+    };
+  });
+  expect(restored.lat).toBeCloseTo(43.06619, 4);
+  expect(restored.lng).toBeCloseTo(141.35299, 4);
+  expect(restored.zoom).toBeCloseTo(16.35, 2);
+  expect(restored.styleName).toBe("map-simplifier-mono");
+  expect(restored.hidden).toBe(1);
+  expect(restored.highlighted).toBe(1);
+  expect(restored.buildingVisible).toBe(false);
+  expect(restored.roadWidth).toBeCloseTo(1.25, 5);
+});
+
+test("Export/Import round-trips current state as JSON", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(async () => {
+    const g = window as unknown as {
+      __mlMap?: {
+        jumpTo(options: { center: [number, number]; zoom: number }): void;
+        once(type: "idle", listener: () => void): void;
+        queryRenderedFeatures(
+          geometry?: unknown,
+          options?: { layers: string[] },
+        ): Array<{
+          sourceLayer?: string;
+          geometry: GeoJSON.Geometry;
+          properties?: Record<string, unknown>;
+        }>;
+      };
+      __editState?: { hideMany(items: unknown[]): void };
+      __layerVisibilityStore?: { set(category: "roadEdge", visible: boolean): void };
+    };
+    const map = g.__mlMap!;
+    map.jumpTo({ center: [141.35299, 43.06619], zoom: 15.7 });
+    await new Promise<void>((resolve) => map.once("idle", resolve));
+    const feature = map.queryRenderedFeatures(undefined, { layers: ["road-line", "building-fill"] })[0];
+    if (!feature) throw new Error("test feature not found");
+    g.__editState!.hideMany([
+      {
+        sourceLayer: feature.sourceLayer ?? "",
+        geometry: feature.geometry,
+        properties: feature.properties ?? {},
+      },
+    ]);
+    g.__layerVisibilityStore!.set("roadEdge", false);
+  });
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#export-project").click();
+  const download = await downloadPromise;
+  const path = await download.path();
+  expect(path).toBeTruthy();
+
+  await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { jumpTo(options: { center: [number, number]; zoom: number }): void };
+      __editState?: { clearAll(): void };
+      __layerVisibilityStore?: { reset(): void };
+    };
+    g.__mlMap!.jumpTo({ center: [139.767, 35.681], zoom: 13 });
+    g.__editState!.clearAll();
+    g.__layerVisibilityStore!.reset();
+  });
+
+  await page.locator("#import-project-file").setInputFiles(path!);
+  await expect(page.locator("#project-status")).toContainText("Import:");
+
+  const imported = await page.evaluate(() => {
+    const g = window as unknown as {
+      __mlMap?: { getCenter(): { lat: number; lng: number }; getZoom(): number };
+      __editState?: { state: { hidden: unknown[] } };
+      __layerVisibilityStore?: { state: Record<string, boolean> };
+    };
+    const c = g.__mlMap!.getCenter();
+    return {
+      lat: c.lat,
+      lng: c.lng,
+      zoom: g.__mlMap!.getZoom(),
+      hidden: g.__editState!.state.hidden.length,
+      roadEdgeVisible: g.__layerVisibilityStore!.state.roadEdge,
+    };
+  });
+  expect(imported.lat).toBeCloseTo(43.06619, 4);
+  expect(imported.lng).toBeCloseTo(141.35299, 4);
+  expect(imported.zoom).toBeCloseTo(15.7, 2);
+  expect(imported.hidden).toBe(1);
+  expect(imported.roadEdgeVisible).toBe(false);
+});
+
 test("layer visibility popover toggles building, water, and road edge layers", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => document.body.dataset.mapReady === "true", null, {

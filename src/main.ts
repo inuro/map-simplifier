@@ -38,12 +38,14 @@ import {
   LineWidthStore,
   LINE_WIDTH_MAX,
   LINE_WIDTH_MIN,
+  type LineWidthFactors,
   type LineWidthCategory,
 } from "./state/lineWidthStore";
 import {
   LAYER_VISIBILITY_CATEGORIES,
   LayerVisibilityStore,
   isSourceLayerVisible,
+  type LayerVisibilityState,
   type LayerVisibilityCategory,
 } from "./state/layerVisibilityStore";
 import {
@@ -61,6 +63,23 @@ import {
 import { SelectionStore, toSelectionFeatureCollection } from "./state/selectionStore";
 import { History } from "./state/history";
 import { buildExportFilename, composePngWithCredit, downloadCanvasAsPng } from "./export/png";
+import {
+  buildProjectSnapshot,
+  editSnapshotFromProjectSnapshot,
+  formatBytes,
+  parseProjectSnapshotJson,
+  projectSnapshotByteSize,
+  safeFilenamePart,
+  serializeProjectSnapshot,
+  type ProjectSnapshot,
+} from "./state/projectSnapshot";
+import {
+  listProjectSnapshots,
+  loadProjectSnapshot,
+  saveProjectSnapshot,
+  type SavedProjectEntry,
+} from "./state/projectStorage";
+import { suggestSnapshotLabel } from "./state/reverseGeocode";
 
 function requireEl<T extends Element>(id: string, ctor: new (...a: never[]) => T): T {
   const el = document.getElementById(id);
@@ -87,6 +106,13 @@ const layerVisibilityPopover = requireEl("layer-visibility-popover", HTMLElement
 const lineWidthResetBtn = requireEl("line-width-reset", HTMLButtonElement);
 const appVersionEl = requireEl("app-version", HTMLSpanElement);
 const zoomDisplayEl = requireEl("zoom-display", HTMLSpanElement);
+const saveProjectBtn = requireEl("save-project", HTMLButtonElement);
+const loadProjectSelect = requireEl("load-project-select", HTMLSelectElement);
+const loadProjectBtn = requireEl("load-project", HTMLButtonElement);
+const exportProjectBtn = requireEl("export-project", HTMLButtonElement);
+const importProjectBtn = requireEl("import-project", HTMLButtonElement);
+const importProjectFile = requireEl("import-project-file", HTMLInputElement);
+const projectStatusEl = requireEl("project-status", HTMLSpanElement);
 
 // Vite の define で package.json.version から注入される。
 appVersionEl.textContent = `v${__APP_VERSION__}`;
@@ -123,12 +149,16 @@ map.addControl(
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 
-function syncHash(): void {
+function currentViewState(): ViewState {
   const c = map.getCenter();
-  const v: ViewState = {
+  return {
     center: { lng: c.lng, lat: c.lat },
     zoom: map.getZoom(),
   };
+}
+
+function syncHash(): void {
+  const v = currentViewState();
   const h = encodeViewToHash(v);
   if (window.location.hash !== h) {
     window.history.replaceState(null, "", h);
@@ -555,12 +585,205 @@ function redo(): void {
   if (next) editState.restore(next);
 }
 
+// ---- 状態 Save / Load / Export / Import ----
+
+function setProjectStatus(kind: "idle" | "success" | "error", message: string): void {
+  projectStatusEl.textContent = message;
+  if (kind === "idle") {
+    projectStatusEl.removeAttribute("data-kind");
+  } else {
+    projectStatusEl.dataset["kind"] = kind;
+  }
+}
+
+function currentProjectSnapshot(label: string): ProjectSnapshot {
+  return buildProjectSnapshot({
+    appVersion: __APP_VERSION__,
+    label,
+    view: currentViewState(),
+    preset: currentPreset,
+    layerVisibility: layerVisibilityStore.state as LayerVisibilityState,
+    lineWidth: lineWidthStore.factors as LineWidthFactors,
+    editState: editState.snapshot(),
+  });
+}
+
+function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function storageEstimateText(snapshotBytes: number): Promise<string> {
+  if (!navigator.storage?.estimate) return formatBytes(snapshotBytes);
+  try {
+    const estimate = await navigator.storage.estimate();
+    if (typeof estimate.usage === "number" && typeof estimate.quota === "number") {
+      return `${formatBytes(snapshotBytes)} / storage ${formatBytes(estimate.usage)} of ${formatBytes(
+        estimate.quota,
+      )}`;
+    }
+  } catch {
+    // 表示用の補助情報なので失敗は無視。
+  }
+  return formatBytes(snapshotBytes);
+}
+
+function applyProjectSnapshot(snapshot: ProjectSnapshot): void {
+  if (zoomLockSnapshot !== null) {
+    unlockZoom(map, zoomLockSnapshot);
+    zoomLockSnapshot = null;
+  }
+  selectionStore.clear();
+  history.clear();
+
+  map.jumpTo({
+    center: [snapshot.view.center.lng, snapshot.view.center.lat],
+    zoom: snapshot.view.zoom,
+  });
+  applyPreset(snapshot.preset);
+  layerVisibilityStore.replace(snapshot.layerVisibility);
+  lineWidthStore.replace(snapshot.lineWidth);
+  editState.restore(editSnapshotFromProjectSnapshot(snapshot));
+  syncHash();
+  updateZoomDisplay();
+}
+
+function updateLoadProjectControls(): void {
+  loadProjectBtn.disabled = loadProjectSelect.value === "";
+}
+
+function renderSavedProjectOptions(entries: SavedProjectEntry[], selectedId = ""): void {
+  loadProjectSelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = entries.length > 0 ? "Load..." : "No saves";
+  loadProjectSelect.append(placeholder);
+
+  for (const entry of entries) {
+    const option = document.createElement("option");
+    option.value = entry.id;
+    const date = new Date(entry.savedAt);
+    const dateLabel = Number.isNaN(date.getTime())
+      ? entry.savedAt
+      : date.toLocaleString("ja-JP", {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+    option.textContent = `${entry.label} (${dateLabel})`;
+    loadProjectSelect.append(option);
+  }
+  loadProjectSelect.value = selectedId;
+  updateLoadProjectControls();
+}
+
+async function refreshSavedProjectOptions(selectedId = ""): Promise<void> {
+  try {
+    renderSavedProjectOptions(await listProjectSnapshots(), selectedId);
+  } catch (e) {
+    console.error(e);
+    setProjectStatus("error", "保存一覧を読めません");
+  }
+}
+
+async function defaultSnapshotLabel(): Promise<string> {
+  return await suggestSnapshotLabel(currentViewState().center, map.getZoom());
+}
+
+async function handleSaveProject(): Promise<void> {
+  saveProjectBtn.disabled = true;
+  setProjectStatus("idle", "ラベル作成中...");
+  try {
+    const suggestion = await defaultSnapshotLabel();
+    const label = window.prompt("保存名", suggestion);
+    if (label === null) {
+      setProjectStatus("idle", "");
+      return;
+    }
+    const snapshot = currentProjectSnapshot(label.trim() || suggestion);
+    const entry = await saveProjectSnapshot(snapshot);
+    await refreshSavedProjectOptions(entry.id);
+    const size = await storageEstimateText(entry.bytes);
+    setProjectStatus("success", `保存しました (${size})`);
+  } catch (e) {
+    console.error(e);
+    setProjectStatus("error", "保存に失敗しました");
+  } finally {
+    saveProjectBtn.disabled = false;
+  }
+}
+
+async function handleLoadProject(): Promise<void> {
+  const id = loadProjectSelect.value;
+  if (!id) return;
+  loadProjectBtn.disabled = true;
+  try {
+    const snapshot = await loadProjectSnapshot(id);
+    if (!snapshot) {
+      setProjectStatus("error", "保存が見つかりません");
+      await refreshSavedProjectOptions();
+      return;
+    }
+    applyProjectSnapshot(snapshot);
+    setProjectStatus("success", `読み込みました: ${snapshot.label}`);
+  } catch (e) {
+    console.error(e);
+    setProjectStatus("error", "読み込みに失敗しました");
+  } finally {
+    updateLoadProjectControls();
+  }
+}
+
+function handleExportProject(): void {
+  const label = `map ${formatLatLng(currentViewState().center, 3)} Z${map.getZoom().toFixed(2)}`;
+  const snapshot = currentProjectSnapshot(label);
+  const text = serializeProjectSnapshot(snapshot);
+  const filename = `${safeFilenamePart(snapshot.label)}.map-simplifier.json`;
+  downloadTextFile(filename, text);
+  setProjectStatus("success", `Export ${formatBytes(projectSnapshotByteSize(snapshot))}`);
+}
+
+async function handleImportProjectFile(file: File): Promise<void> {
+  try {
+    const snapshot = parseProjectSnapshotJson(await file.text());
+    applyProjectSnapshot(snapshot);
+    setProjectStatus("success", `Import: ${snapshot.label}`);
+  } catch (e) {
+    console.error(e);
+    setProjectStatus("error", "Import JSON が不正です");
+  } finally {
+    importProjectFile.value = "";
+  }
+}
+
 deleteBtn.addEventListener("click", deleteSelected);
 deleteInverseBtn.addEventListener("click", deleteInverseOfSelected);
 highlightBtn.addEventListener("click", toggleHighlightSelected);
 resetEditsBtn.addEventListener("click", resetAllEdits);
 undoBtn.addEventListener("click", undo);
 redoBtn.addEventListener("click", redo);
+saveProjectBtn.addEventListener("click", () => {
+  void handleSaveProject();
+});
+loadProjectSelect.addEventListener("change", updateLoadProjectControls);
+loadProjectBtn.addEventListener("click", () => {
+  void handleLoadProject();
+});
+exportProjectBtn.addEventListener("click", handleExportProject);
+importProjectBtn.addEventListener("click", () => importProjectFile.click());
+importProjectFile.addEventListener("change", () => {
+  const file = importProjectFile.files?.[0];
+  if (file) void handleImportProjectFile(file);
+});
+void refreshSavedProjectOptions();
 
 // ---- キーボードショートカット ----
 

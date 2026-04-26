@@ -91,4 +91,18 @@ describe("LineWidthStore", () => {
     s.increase("road");
     expect(l).not.toHaveBeenCalled();
   });
+
+  it("replace restores serialized factors and clamps unsafe values", () => {
+    const s = new LineWidthStore();
+    const l = vi.fn();
+    s.subscribe(l);
+    s.replace({ road: 2, roadEdge: 100, building: 0.01 });
+    expect(s.factors).toEqual({
+      ...DEFAULT_LINE_WIDTH_FACTORS,
+      road: 2,
+      roadEdge: LINE_WIDTH_MAX,
+      building: LINE_WIDTH_MIN,
+    });
+    expect(l).toHaveBeenCalledTimes(1);
+  });
 });

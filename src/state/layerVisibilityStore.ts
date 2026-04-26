@@ -70,6 +70,19 @@ export class LayerVisibilityStore {
     this.set(category, !this._state[category]);
   }
 
+  replace(next: Partial<LayerVisibilityState>): void {
+    const merged: LayerVisibilityState = { ...DEFAULT_LAYER_VISIBILITY };
+    for (const category of LAYER_VISIBILITY_CATEGORIES) {
+      const value = next[category.id];
+      if (typeof value === "boolean") merged[category.id] = value;
+    }
+    if (LAYER_VISIBILITY_CATEGORIES.every((c) => this._state[c.id] === merged[c.id])) {
+      return;
+    }
+    this._state = merged;
+    this._emit();
+  }
+
   reset(): void {
     if (LAYER_VISIBILITY_CATEGORIES.every((c) => this._state[c.id])) return;
     this._state = { ...DEFAULT_LAYER_VISIBILITY };

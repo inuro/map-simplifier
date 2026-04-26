@@ -38,6 +38,19 @@ describe("LayerVisibilityStore", () => {
     s.reset();
     expect(s.state).toEqual(DEFAULT_LAYER_VISIBILITY);
   });
+
+  it("replace restores serialized visibility in one notification", () => {
+    const s = new LayerVisibilityStore();
+    const l = vi.fn();
+    s.subscribe(l);
+    s.replace({ building: false, roadEdge: false });
+    expect(s.state).toEqual({
+      ...DEFAULT_LAYER_VISIBILITY,
+      building: false,
+      roadEdge: false,
+    });
+    expect(l).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("layer visibility category mapping", () => {

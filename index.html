@@ -155,6 +155,33 @@
         display: inline-flex;
         gap: 6px;
       }
+      .project-io-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .project-load-select {
+        max-width: 150px;
+        border: 1px solid #aaa;
+        border-radius: 4px;
+        padding: 5px 8px;
+        font-size: 13px;
+        background: #fff;
+      }
+      .project-status {
+        max-width: 14em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        color: #666;
+      }
+      .project-status[data-kind="error"] {
+        color: #b42318;
+      }
+      .project-status[data-kind="success"] {
+        color: #246b2a;
+      }
       .layer-visibility-wrap {
         position: relative;
       }
@@ -259,6 +286,17 @@
         <span id="selection-count" class="selection-count" aria-live="polite"></span>
         <span class="spacer"></span>
         <span id="zoom-display" class="zoom-display" aria-live="polite" title="現在のズームレベル。編集中はロックされ、🔒 が表示される。">Z --</span>
+        <div class="project-io-group" role="group" aria-label="状態の保存と読み込み">
+          <button id="save-project" class="primary" type="button">Save</button>
+          <select id="load-project-select" class="project-load-select" aria-label="保存済み状態">
+            <option value="">Load...</option>
+          </select>
+          <button id="load-project" class="primary" type="button" disabled>Load</button>
+          <button id="export-project" class="primary" type="button">Export</button>
+          <button id="import-project" class="primary" type="button">Import</button>
+          <input id="import-project-file" type="file" accept="application/json,.json" hidden />
+          <span id="project-status" class="project-status" aria-live="polite"></span>
+        </div>
         <div class="preset-group" role="group" aria-label="スタイルプリセット">
           <button id="preset-standard" type="button" aria-pressed="true">標準</button>
           <button id="preset-mono" type="button" aria-pressed="false">モノトーン</button>

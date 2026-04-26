@@ -67,6 +67,21 @@ export class LineWidthStore {
     this._emit();
   }
 
+  replace(next: Partial<LineWidthFactors>): void {
+    const merged: LineWidthFactors = { ...DEFAULT_LINE_WIDTH_FACTORS };
+    for (const category of LINE_WIDTH_CATEGORIES) {
+      const value = next[category];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        merged[category] = clamp(value);
+      }
+    }
+    if (LINE_WIDTH_CATEGORIES.every((c) => nearlyEqual(this._factors[c], merged[c]))) {
+      return;
+    }
+    this._factors = merged;
+    this._emit();
+  }
+
   reset(): void {
     const def = DEFAULT_LINE_WIDTH_FACTORS;
     if (LINE_WIDTH_CATEGORIES.every((c) => nearlyEqual(this._factors[c], def[c]))) {
