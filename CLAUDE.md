@@ -42,6 +42,29 @@
 
 この種の環境横断の話は `~/.claude/CLAUDE.md` から参照する Obsidian ノート `topics/mac-dev-environment.md` にも記録している。変更があれば両方を更新する。
 
+### launchd 常駐サービスとしてのデプロイ
+
+書籍原稿執筆時にいつでも http://127.0.0.1:5173/ を開けるよう、production build を launchd で常駐 serve する。設計と制約は `~/.claude/references/launchd-service-guide.md` を参照。
+
+このプロジェクト固有の事情：
+
+- ソースは Dropbox CloudStorage 配下にあり、launchd 起動プロセスは TCC (`kTCCServiceFileProviderDomain`) で File Provider 配下のファイルにアクセスできない。よってソース直起動は不可。
+- 対策：`pnpm build` で生成した `dist/` を `~/.local/share/map-simplifier/dist/` に rsync し、`python3 -m http.server` で 127.0.0.1:5173 に serve する。
+- 開発で `pnpm dev` を使うときは、先に launchd 側を `unload` するか、`pnpm dev --port 5174` のように別ポートに逃がす。
+
+#### 関連ファイル
+
+- `scripts/launchd/deploy.sh` — `dist/` を `~/.local/share/...` へ配置し、plist (`com.inuro.map-simplifier.plist`) を heredoc で生成して `~/Library/LaunchAgents/` に書き出す。plist には環境固有のフルパス (`/Users/<user>/...`) が必須なので、リポジトリ内には plist 実体は置かず、deploy 時に `$HOME` 込みで生成する。
+- ログ: `/tmp/map-simplifier-stdout.log`, `/tmp/map-simplifier-stderr.log`
+
+#### deploy / (再)登録
+
+```bash
+bash scripts/launchd/deploy.sh --build   # build と配置を一気に
+launchctl unload ~/Library/LaunchAgents/com.inuro.map-simplifier.plist 2>/dev/null
+launchctl load   ~/Library/LaunchAgents/com.inuro.map-simplifier.plist
+```
+
 ### 実レイヤ名（experimental_bvmap）
 
 `scripts/inspect-tile.mjs` で実タイルを解析した結果、国土地理院ベクトルタイル試験公開の source-layer は以下。スタイル(`src/map/style.ts`)もこの名称に合わせている。
